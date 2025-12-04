@@ -1,0 +1,306 @@
+/* LinkedIn Triage Extension Styles */
+
+/* ============================================
+   Triage Indicator (color dot + priority)
+   ============================================ */
+
+.li-triage-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  margin-right: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  font-size: 11px;
+  flex-shrink: 0;
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+}
+
+.li-triage-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.li-triage-priority {
+  color: #b45309;
+  font-size: 10px;
+  letter-spacing: -1px;
+}
+
+/* Loading animation */
+.li-triage-loading .li-triage-dot-loading {
+  background: linear-gradient(90deg, #e5e7eb, #9ca3af, #e5e7eb);
+  background-size: 200% 100%;
+  animation: li-triage-loading-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes li-triage-loading-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ============================================
+   Filter Toolbar
+   ============================================ */
+
+.li-triage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.li-triage-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: white;
+  cursor: pointer;
+  font-size: 12px;
+  color: #64748b;
+  transition: all 0.15s ease;
+}
+
+.li-triage-filter-btn:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.li-triage-filter-btn.li-triage-filter-active {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.li-triage-filter-btn:not(.li-triage-filter-active) {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.li-triage-filter-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.li-triage-filter-check {
+  font-size: 10px;
+  margin-left: 2px;
+}
+
+.li-triage-filter-active .li-triage-filter-check {
+  color: #22c55e;
+}
+
+.li-triage-filter-btn:not(.li-triage-filter-active) .li-triage-filter-check {
+  color: #ef4444;
+}
+
+/* Bulk actions */
+.li-triage-bulk-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.li-triage-bulk-btn {
+  padding: 4px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 4px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.li-triage-bulk-btn:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+/* ============================================
+   Hidden Messages
+   ============================================ */
+
+.li-triage-hidden {
+  display: none !important;
+}
+
+/* ============================================
+   Hover Tooltip
+   ============================================ */
+
+.li-triage-has-tooltip {
+  position: relative;
+}
+
+.li-triage-tooltip {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 8px;
+  padding: 10px 12px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: 280px;
+  z-index: 1000;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.li-triage-has-tooltip:hover .li-triage-tooltip {
+  display: block;
+}
+
+.li-triage-tooltip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-left: 8px;
+  margin-bottom: 6px;
+}
+
+.li-triage-tooltip-category {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.li-triage-tooltip-priority {
+  color: #b45309;
+  font-size: 12px;
+}
+
+.li-triage-tooltip-summary {
+  color: #334155;
+  margin-bottom: 6px;
+}
+
+.li-triage-tooltip-meta {
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+/* ============================================
+   Responsive adjustments for LinkedIn overlay
+   ============================================ */
+
+.msg-overlay-list-bubble .li-triage-toolbar {
+  padding: 6px 10px;
+}
+
+.msg-overlay-list-bubble .li-triage-filter-btn {
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.msg-overlay-list-bubble .li-triage-indicator {
+  padding: 1px 4px;
+  margin-right: 4px;
+}
+
+.msg-overlay-list-bubble .li-triage-tooltip {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+/* ============================================
+   Dark mode support
+   ============================================ */
+
+@media (prefers-color-scheme: dark) {
+  .li-triage-toolbar {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .li-triage-filter-btn {
+    background: #334155;
+    border-color: #475569;
+    color: #cbd5e1;
+  }
+
+  .li-triage-filter-btn:hover {
+    background: #475569;
+  }
+
+  .li-triage-filter-btn.li-triage-filter-active {
+    background: #064e3b;
+    border-color: #059669;
+    color: #a7f3d0;
+  }
+
+  .li-triage-indicator {
+    background: rgba(30, 41, 59, 0.95);
+  }
+
+  .li-triage-tooltip {
+    background: #1e293b;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+
+  .li-triage-tooltip-category {
+    color: #f1f5f9;
+  }
+
+  .li-triage-tooltip-summary {
+    color: #cbd5e1;
+  }
+}
+
+/* LinkedIn uses its own dark mode class */
+body.theme--dark .li-triage-toolbar,
+.theme--dark .li-triage-toolbar {
+  background: #1d2226;
+  border-color: #38434f;
+}
+
+body.theme--dark .li-triage-filter-btn,
+.theme--dark .li-triage-filter-btn {
+  background: #38434f;
+  border-color: #56687a;
+  color: #b0b7bf;
+}
+
+body.theme--dark .li-triage-indicator,
+.theme--dark .li-triage-indicator {
+  background: rgba(29, 34, 38, 0.95);
+}
+
+body.theme--dark .li-triage-tooltip,
+.theme--dark .li-triage-tooltip {
+  background: #1d2226;
+}
+
+body.theme--dark .li-triage-tooltip-category,
+.theme--dark .li-triage-tooltip-category {
+  color: #e7e9ea;
+}
+
+body.theme--dark .li-triage-tooltip-summary,
+.theme--dark .li-triage-tooltip-summary {
+  color: #b0b7bf;
+}
