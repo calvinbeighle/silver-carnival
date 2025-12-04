@@ -20,7 +20,9 @@ const MESSAGES = {
   GET_FILTERS: 'GET_FILTERS',
   GET_API_KEY: 'GET_API_KEY',
   SET_API_KEY: 'SET_API_KEY',
-  CLEAR_CACHE: 'CLEAR_CACHE'
+  CLEAR_CACHE: 'CLEAR_CACHE',
+  GET_USER_CONTEXT: 'GET_USER_CONTEXT',
+  SET_USER_CONTEXT: 'SET_USER_CONTEXT'
 };
 
 const DefaultFilters = {
@@ -32,24 +34,70 @@ const DefaultFilters = {
   OTHER: true
 };
 
-const CLASSIFICATION_PROMPT = `You are categorizing LinkedIn messages for inbox triage. For each message, output ONLY a JSON object.
+// This will be built dynamically with user context
+function buildClassificationPrompt(userContext) {
+  return `You are an expert at categorizing LinkedIn messages for busy professionals who receive hundreds of messages daily. Your job is to help them quickly identify what's worth their time.
 
-Categories:
-- SALES: Cold outreach selling a product/service
-- RECRUITING: Job opportunities, hiring inquiries
-- PERSONAL: Genuine networking, follow-ups, people who know the user
-- EVENT: Event invitations, webinar promos
-- CONTENT: Comments about posts, content engagement
-- OTHER: Doesn't fit above
+## USER CONTEXT (IMPORTANT - use this to determine relevance):
+${userContext || 'No specific context provided. Use general professional relevance.'}
 
-For each message, assess:
-1. category: One of the above (SALES, RECRUITING, PERSONAL, EVENT, CONTENT, OTHER)
-2. priority: 1-5 (5 = definitely worth reading, 1 = safe to ignore)
-3. summary: One sentence, max 15 words, what do they want?
-4. effort: "template" or "personalized" - does this feel mass-sent?
+## CATEGORIES:
+- SALES: Cold outreach trying to sell products/services. Key signals:
+  * Sender works at a company selling B2B services (SaaS, consulting, marketing, recruiting agencies, etc.)
+  * Message mentions "helping companies like yours", "quick call", "demo", "solution"
+  * Generic compliments followed by a pitch
+  * InMail from someone not connected to you
+  * Titles like "Account Executive", "Sales", "Business Development", "SDR", "Growth"
+
+- RECRUITING: Job opportunities or hiring. Key signals:
+  * Sender is a recruiter, talent acquisition, or HR
+  * Message mentions roles, positions, opportunities, or "your background"
+  * Headhunters reaching out about specific positions
+
+- PERSONAL: Genuine connection worth responding to. Key signals:
+  * Person's role/company is DIRECTLY relevant to user's work context above
+  * Message references specific shared context (mutual connections, same company, met at event)
+  * Follow-up to existing relationship
+  * Substantive question or discussion, not a pitch
+  * First-degree connection reaching out about something specific
+
+- EVENT: Event invitations, webinars, conferences. Key signals:
+  * Promoting attendance at an event
+  * Webinar invitations
+  * Conference speaking or sponsorship requests
+
+- CONTENT: About posts or content. Key signals:
+  * Commenting on or sharing user's posts
+  * Content collaboration requests
+  * Podcast/interview invitations
+
+- OTHER: Doesn't fit above categories
+
+## PRIORITY SCORING (1-5):
+5 = MUST READ: Directly relevant to user's work, from someone important, or requires action
+4 = LIKELY VALUABLE: Probably worth reading, relevant industry/role
+3 = MAYBE: Could be useful, unclear intent
+2 = PROBABLY SKIP: Generic outreach but might have value
+1 = SAFE TO IGNORE: Obvious sales, mass-sent templates, irrelevant
+
+## KEY SIGNALS FOR SALES DETECTION:
+- InMail = almost always sales or recruiting (paid messages)
+- Titles containing: Sales, Account Executive, SDR, BDR, Business Development, Growth, Partnerships (at non-relevant companies)
+- Companies that are agencies, consultancies, or B2B SaaS selling to businesses
+- Messages that are vague about why they're reaching out
+- "I came across your profile" + pitch = SALES
+- Asking for a "quick call" or "15 minutes" without clear value to recipient = SALES
+
+## OUTPUT FORMAT:
+For each message, return a JSON object with:
+- category: One of SALES, RECRUITING, PERSONAL, EVENT, CONTENT, OTHER
+- priority: 1-5 (be harsh - most cold outreach should be 1-2)
+- summary: One sentence (max 15 words) - what do they actually want?
+- effort: "template" (mass-sent, generic) or "personalized" (specific to recipient)
 
 Messages to categorize:
 `;
+}
 
 // ============================================
 // Storage Functions
@@ -87,6 +135,15 @@ async function getFilters() {
 
 async function setFilters(filters) {
   await setStorage({ filters });
+}
+
+async function getUserContext() {
+  const { userContext } = await getStorage('userContext');
+  return userContext || '';
+}
+
+async function setUserContext(context) {
+  await setStorage({ userContext: context });
 }
 
 async function getClassifications() {
@@ -173,17 +230,25 @@ async function classifyMessages(messages) {
 }
 
 async function classifyBatch(messages, apiKey) {
-  let prompt = CLASSIFICATION_PROMPT;
+  // Get user context
+  const userContext = await getUserContext();
+  let prompt = buildClassificationPrompt(userContext);
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const truncatedMessage = truncateMessage(msg.message, MAX_MESSAGE_LENGTH);
-    const connectionInfo = msg.isFirstConnection ? '(1st connection)' : '(not connected)';
+    const connectionInfo = msg.isFirstConnection ? '1st-degree connection' : 'NOT connected';
+    const inMailInfo = msg.isInMail ? ' [INMAIL - paid message]' : '';
+    const senderTitle = msg.senderTitle ? msg.senderTitle : 'Unknown title';
 
-    prompt += '\n---\nMessage ' + (i + 1) + ' from ' + msg.participantName + ' ' + connectionInfo + ':\n' + truncatedMessage + '\n';
+    prompt += '\n---\nMessage ' + (i + 1) + ':\n';
+    prompt += 'From: ' + msg.participantName + '\n';
+    prompt += 'Title: ' + senderTitle + '\n';
+    prompt += 'Connection: ' + connectionInfo + inMailInfo + '\n';
+    prompt += 'Message: ' + truncatedMessage + '\n';
   }
 
-  prompt += '\n---\n\nRespond with a JSON array only, one object per message, in the same order.';
+  prompt += '\n---\n\nRespond with ONLY a JSON array, one object per message, in the same order. No other text.';
 
   try {
     const response = await fetch(CLAUDE_API_URL, {
@@ -288,43 +353,76 @@ function createFallbackClassifications(messages) {
 
 function createFallbackClassification(msg) {
   const message = (msg.message || '').toLowerCase();
+  const title = (msg.senderTitle || '').toLowerCase();
 
   let category = 'OTHER';
   let priority = 3;
+  let effort = 'template';
 
+  // Sales title indicators (very strong signal)
+  const salesTitles = ['account executive', 'sales', 'sdr', 'bdr', 'business development',
+    'growth', 'partnerships', 'customer success', 'revenue'];
+  const hasSalesTitle = salesTitles.some(function(t) { return title.includes(t); });
+
+  // Recruiting title indicators
+  const recruitingTitles = ['recruiter', 'talent', 'hr ', 'human resources', 'people operations',
+    'hiring', 'staffing'];
+  const hasRecruitingTitle = recruitingTitles.some(function(t) { return title.includes(t); });
+
+  // Sales message keywords
   const salesKeywords = ['demo', 'schedule a call', 'would love to connect', 'help your company',
-    'services', 'solution', 'platform', 'offer', 'discount', 'free trial', 'pricing'];
-  if (salesKeywords.some(function(kw) { return message.includes(kw); })) {
-    category = 'SALES';
-    priority = 1;
-  }
+    'services', 'solution', 'platform', 'offer', 'discount', 'free trial', 'pricing',
+    'quick call', '15 minutes', 'i came across', 'reaching out because', 'love to chat',
+    'helping companies', 'i noticed'];
 
+  // Recruiting message keywords
   const recruitingKeywords = ['opportunity', 'position', 'hiring', 'role', 'job', 'recruit',
-    'candidate', 'talent', 'career', 'compensation', 'salary'];
-  if (recruitingKeywords.some(function(kw) { return message.includes(kw); })) {
-    category = 'RECRUITING';
-    priority = 3;
-  }
+    'candidate', 'talent', 'career', 'compensation', 'salary', 'your background',
+    'perfect fit', 'exciting role'];
 
+  // Event keywords
   const eventKeywords = ['event', 'webinar', 'conference', 'meetup', 'invitation', 'join us',
     'register', 'rsvp', 'summit', 'workshop'];
-  if (eventKeywords.some(function(kw) { return message.includes(kw); })) {
+
+  // InMail is almost always sales or recruiting
+  if (msg.isInMail) {
+    if (hasRecruitingTitle) {
+      category = 'RECRUITING';
+      priority = 2;
+    } else {
+      category = 'SALES';
+      priority = 1;
+    }
+    effort = 'template';
+  }
+  // Sales detection
+  else if (hasSalesTitle || salesKeywords.some(function(kw) { return message.includes(kw); })) {
+    category = 'SALES';
+    priority = 1;
+    effort = 'template';
+  }
+  // Recruiting detection
+  else if (hasRecruitingTitle || recruitingKeywords.some(function(kw) { return message.includes(kw); })) {
+    category = 'RECRUITING';
+    priority = 2;
+  }
+  // Event detection
+  else if (eventKeywords.some(function(kw) { return message.includes(kw); })) {
     category = 'EVENT';
     priority = 2;
   }
-
-  if (msg.isFirstConnection) {
-    priority = Math.min(5, priority + 2);
-    if (category === 'OTHER') {
-      category = 'PERSONAL';
-    }
+  // First connections without sales signals are likely personal
+  else if (msg.isFirstConnection) {
+    category = 'PERSONAL';
+    priority = 4;
+    effort = 'personalized';
   }
 
   return {
     category: category,
     priority: priority,
     summary: 'Classification unavailable - check message manually',
-    effort: 'template'
+    effort: effort
   };
 }
 
@@ -378,6 +476,13 @@ async function handleMessage(message, sender) {
 
       case MESSAGES.CLEAR_CACHE:
         await clearClassifications();
+        return { success: true };
+
+      case MESSAGES.GET_USER_CONTEXT:
+        return { userContext: await getUserContext() };
+
+      case MESSAGES.SET_USER_CONTEXT:
+        await setUserContext(message.userContext);
         return { success: true };
 
       case 'GET_STATS':

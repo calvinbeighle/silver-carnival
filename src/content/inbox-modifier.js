@@ -167,9 +167,28 @@
       const nameElement = findElement(SELECTORS.nameSelectors, conversationElement);
       const participantName = nameElement ? nameElement.textContent.trim() : 'Unknown';
 
+      // Get sender's title/headline
+      const titleElement = findElement(SELECTORS.titleSelectors, conversationElement);
+      let senderTitle = titleElement ? titleElement.textContent.trim() : '';
+
+      // Also try to extract from aria-label or other attributes
+      if (!senderTitle) {
+        const ariaLabel = conversationElement.getAttribute('aria-label') || '';
+        // LinkedIn often includes title in aria-label like "Conversation with Name, Title"
+        const titleMatch = ariaLabel.match(/,\s*(.+?)(?:\s*\d+\s*(?:new\s*)?message|$)/i);
+        if (titleMatch) {
+          senderTitle = titleMatch[1].trim();
+        }
+      }
+
       // Get message preview
       const previewElement = findElement(SELECTORS.previewSelectors, conversationElement);
       const lastMessagePreview = previewElement ? previewElement.textContent.trim() : '';
+
+      // Check if this is an InMail (sponsored/paid message)
+      const isInMail = conversationElement.textContent.toLowerCase().includes('inmail') ||
+        conversationElement.querySelector('[class*="inmail"]') !== null ||
+        conversationElement.querySelector('[class*="sponsored"]') !== null;
 
       // Get timestamp
       const timestampElement = findElement(SELECTORS.timestampSelectors, conversationElement);
@@ -187,9 +206,11 @@
       return {
         conversationId,
         participantName,
+        senderTitle,
         lastMessagePreview,
         fullMessage: lastMessagePreview,
         isFirstConnection,
+        isInMail,
         timestamp: parseTimestamp(timestampText),
         isUnread,
         element: conversationElement
@@ -394,8 +415,10 @@
       return {
         conversationId: c.conversationId,
         participantName: c.participantName,
+        senderTitle: c.senderTitle || '',
         message: c.lastMessagePreview,
-        isFirstConnection: c.isFirstConnection
+        isFirstConnection: c.isFirstConnection,
+        isInMail: c.isInMail || false
       };
     });
 

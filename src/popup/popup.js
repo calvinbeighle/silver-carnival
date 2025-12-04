@@ -13,7 +13,9 @@
     GET_FILTERS: 'GET_FILTERS',
     GET_API_KEY: 'GET_API_KEY',
     SET_API_KEY: 'SET_API_KEY',
-    CLEAR_CACHE: 'CLEAR_CACHE'
+    CLEAR_CACHE: 'CLEAR_CACHE',
+    GET_USER_CONTEXT: 'GET_USER_CONTEXT',
+    SET_USER_CONTEXT: 'SET_USER_CONTEXT'
   };
 
   const CategoryColors = {
@@ -46,6 +48,7 @@
   // DOM Elements
   let apiStatus, apiForm, apiKeyInput, saveApiKeyBtn, changeApiKeyBtn;
   let filterToggles, clearCacheBtn, refreshBtn, totalCountEl;
+  let userContextInput, saveContextBtn;
 
   // State
   let currentFilters = { ...DefaultFilters };
@@ -64,6 +67,8 @@
     clearCacheBtn = document.getElementById('clear-cache');
     refreshBtn = document.getElementById('refresh');
     totalCountEl = document.getElementById('total-count');
+    userContextInput = document.getElementById('user-context');
+    saveContextBtn = document.getElementById('save-context');
 
     // Check if this is onboarding
     const urlParams = new URLSearchParams(window.location.search);
@@ -74,7 +79,39 @@
     await checkApiKey();
     await loadFilters();
     await loadStats();
+    await loadUserContext();
     setupEventListeners();
+  }
+
+  /**
+   * Load user context from storage
+   */
+  async function loadUserContext() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: MESSAGES.GET_USER_CONTEXT });
+      if (response && response.userContext && userContextInput) {
+        userContextInput.value = response.userContext;
+      }
+    } catch (error) {
+      console.error('Error loading user context:', error);
+    }
+  }
+
+  /**
+   * Save user context to storage
+   */
+  async function saveUserContext() {
+    const context = userContextInput.value.trim();
+    try {
+      await chrome.runtime.sendMessage({
+        type: MESSAGES.SET_USER_CONTEXT,
+        userContext: context
+      });
+      showToast('Context saved! Clear cache to re-classify.', 'success');
+    } catch (error) {
+      console.error('Error saving user context:', error);
+      showToast('Failed to save context', 'error');
+    }
   }
 
   /**
@@ -282,6 +319,11 @@
         showToast('Could not refresh - open LinkedIn messaging', 'error');
       }
     });
+
+    // Save user context
+    if (saveContextBtn) {
+      saveContextBtn.addEventListener('click', saveUserContext);
+    }
   }
 
   /**
