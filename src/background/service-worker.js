@@ -13,6 +13,12 @@ const BATCH_SIZE = 10;
 const MAX_MESSAGE_LENGTH = 2000;
 const CACHE_EXPIRY_DAYS = 7;
 
+// Vercel proxy URLs
+const VERCEL_BASE_URL = 'https://linked-in-management-extension-q9bfesmoj.vercel.app';
+const VERCEL_PROXY_URL = VERCEL_BASE_URL + '/api/enrich-profile';
+const VERCEL_CLASSIFY_URL = VERCEL_BASE_URL + '/api/classify';
+const PROFILE_CACHE_EXPIRY_DAYS = 30; // Cache profiles longer than classifications
+
 const MESSAGES = {
   CLASSIFY_MESSAGES: 'CLASSIFY_MESSAGES',
   GET_CLASSIFICATIONS: 'GET_CLASSIFICATIONS',
@@ -22,80 +28,85 @@ const MESSAGES = {
   SET_API_KEY: 'SET_API_KEY',
   CLEAR_CACHE: 'CLEAR_CACHE',
   GET_USER_CONTEXT: 'GET_USER_CONTEXT',
-  SET_USER_CONTEXT: 'SET_USER_CONTEXT'
+  SET_USER_CONTEXT: 'SET_USER_CONTEXT',
+  ENRICH_PROFILES: 'ENRICH_PROFILES',
+  SET_USER_PROFILE: 'SET_USER_PROFILE',
+  GET_USER_PROFILE: 'GET_USER_PROFILE',
+  CACHE_CONVERSATION_PROFILES: 'CACHE_CONVERSATION_PROFILES',
+  GET_CONVERSATION_PROFILES: 'GET_CONVERSATION_PROFILES'
 };
 
 const DefaultFilters = {
-  SALES: false,
-  RECRUITING: true,
-  PERSONAL: true,
-  EVENT: false,
-  CONTENT: true,
-  OTHER: true
+  PROMOTIONS: false,
+  SHOULD_RESPOND: true,
+  WE_MET: true,
+  IMPORTANT: true
 };
 
 // This will be built dynamically with user context
 function buildClassificationPrompt(userContext) {
-  return `You are an expert at categorizing LinkedIn messages for busy professionals who receive hundreds of messages daily. Your job is to help them quickly identify what's worth their time.
+  return `You are analyzing LinkedIn conversations to help a busy professional prioritize their inbox.
 
-## USER CONTEXT (IMPORTANT - use this to determine relevance):
-${userContext || 'No specific context provided. Use general professional relevance.'}
+## USER CONTEXT:
+${userContext || 'No specific context provided.'}
 
-## CATEGORIES:
-- SALES: Cold outreach trying to sell products/services. Key signals:
-  * Sender works at a company selling B2B services (SaaS, consulting, marketing, recruiting agencies, etc.)
-  * Message mentions "helping companies like yours", "quick call", "demo", "solution"
-  * Generic compliments followed by a pitch
-  * InMail from someone not connected to you
-  * Titles like "Account Executive", "Sales", "Business Development", "SDR", "Growth"
+## CATEGORY DEFINITIONS (only use these 4):
 
-- RECRUITING: Job opportunities or hiring. Key signals:
-  * Sender is a recruiter, talent acquisition, or HR
-  * Message mentions roles, positions, opportunities, or "your background"
-  * Headhunters reaching out about specific positions
+**IMPORTANT** - VERY RARE (<5% of messages), only use for:
+- User initiated the conversation (they messaged first)
+- Someone the user is clearly already doing business with
+- High-value person who is NOT trying to sell something
+- ASK YOURSELF: "Is this person likely trying to sell me something?" If yes, it's not IMPORTANT.
 
-- PERSONAL: Genuine connection worth responding to. Key signals:
-  * Person's role/company is DIRECTLY relevant to user's work context above
-  * Message references specific shared context (mutual connections, same company, met at event)
-  * Follow-up to existing relationship
-  * Substantive question or discussion, not a pitch
-  * First-degree connection reaching out about something specific
+**WE_MET** - You've actually met this person or have a warm intro:
+- References a specific event: "Great meeting you at [conference]"
+- References a real conversation: "Following up on our chat"
+- Warm intro with context: "[Name] said to reach out about [specific thing]"
+- Clear evidence of prior real-world interaction
+- Alumni or colleagues you've worked with
 
-- EVENT: Event invitations, webinars, conferences. Key signals:
-  * Promoting attendance at an event
-  * Webinar invitations
-  * Conference speaking or sponsorship requests
+**SHOULD_RESPOND** - Worth replying to:
+- Recruiters with genuinely relevant, specific opportunities
+- Professional inquiries that aren't sales pitches
+- Reasonable requests from industry peers
+- Thoughtful outreach with specific, relevant context
+- Follow-ups on real conversations
 
-- CONTENT: About posts or content. Key signals:
-  * Commenting on or sharing user's posts
-  * Content collaboration requests
-  * Podcast/interview invitations
+**PROMOTIONS** - Sales, marketing, or mass outreach:
+- Product demos, software, services pitches
+- SDRs, AEs, Business Development roles cold outreaching
+- "Great to connect!" followed by pitch
+- Multiple follow-ups with no response from user
+- Generic recruiting mass-blasts
+- Event/webinar promotions
+- Newsletter/content promotion
 
-- OTHER: Doesn't fit above categories
-
-## PRIORITY SCORING (1-5):
-5 = MUST READ: Directly relevant to user's work, from someone important, or requires action
-4 = LIKELY VALUABLE: Probably worth reading, relevant industry/role
-3 = MAYBE: Could be useful, unclear intent
-2 = PROBABLY SKIP: Generic outreach but might have value
-1 = SAFE TO IGNORE: Obvious sales, mass-sent templates, irrelevant
-
-## KEY SIGNALS FOR SALES DETECTION:
-- InMail = almost always sales or recruiting (paid messages)
-- Titles containing: Sales, Account Executive, SDR, BDR, Business Development, Growth, Partnerships (at non-relevant companies)
-- Companies that are agencies, consultancies, or B2B SaaS selling to businesses
-- Messages that are vague about why they're reaching out
-- "I came across your profile" + pitch = SALES
-- Asking for a "quick call" or "15 minutes" without clear value to recipient = SALES
+## PRIORITY SCORING (1-10):
+10 = IMPORTANT - user initiated or true VIP
+8-9 = WE_MET - real relationship
+5-7 = SHOULD_RESPOND - worth a reply
+1-4 = PROMOTIONS - low priority
 
 ## OUTPUT FORMAT:
-For each message, return a JSON object with:
-- category: One of SALES, RECRUITING, PERSONAL, EVENT, CONTENT, OTHER
-- priority: 1-5 (be harsh - most cold outreach should be 1-2)
-- summary: One sentence (max 15 words) - what do they actually want?
-- effort: "template" (mass-sent, generic) or "personalized" (specific to recipient)
+Return valid JSON for each conversation:
+{
+  "category": "PROMOTIONS|SHOULD_RESPOND|WE_MET|IMPORTANT",
+  "priority": 1-10,
+  "summary": "One sentence - what do they want? Be direct.",
+  "signals": ["signal1", "signal2"]
+}
 
-Messages to categorize:
+THE KEY QUESTION: "Is this person likely trying to sell me something?"
+- If YES → PROMOTIONS (regardless of their title or seniority)
+- If NO, and you've met them → WE_MET
+- If NO, and worth responding → SHOULD_RESPOND
+- If NO, and user initiated or existing relationship → IMPORTANT
+
+CRITICAL: If the USER has been the one mostly reaching out (user sent more messages), this is NOT a promotion - the user clearly cares about this conversation. Likely IMPORTANT or SHOULD_RESPOND.
+
+Be selective with IMPORTANT - less than 5% of messages qualify.
+
+Conversations to analyze:
 `;
 }
 
@@ -120,8 +131,8 @@ async function setStorage(data) {
 }
 
 async function getApiKey() {
-  const { apiKey } = await getStorage('apiKey');
-  return apiKey || null;
+  // API key is now handled by Vercel proxy
+  return 'VERCEL_PROXY';
 }
 
 async function setApiKey(key) {
@@ -144,6 +155,98 @@ async function getUserContext() {
 
 async function setUserContext(context) {
   await setStorage({ userContext: context });
+}
+
+async function getUserProfile() {
+  const { userProfile } = await getStorage('userProfile');
+  return userProfile || null;
+}
+
+async function setUserProfile(profileUrl) {
+  // Check if we already have this profile enriched
+  const existing = await getUserProfile();
+  if (existing && existing.url === profileUrl) {
+    console.log('[LinkedIn Triage] User profile already cached');
+    return existing;
+  }
+
+  console.log('[LinkedIn Triage] Enriching user profile:', profileUrl);
+
+  // Enrich the user's profile via Vercel proxy
+  try {
+    const profiles = await enrichProfiles([profileUrl]);
+    const enrichedProfile = profiles[profileUrl];
+
+    if (enrichedProfile) {
+      const userProfile = {
+        url: profileUrl,
+        ...enrichedProfile
+      };
+      await setStorage({ userProfile });
+      console.log('[LinkedIn Triage] User profile enriched and cached:', userProfile);
+      return userProfile;
+    }
+  } catch (error) {
+    console.error('[LinkedIn Triage] Failed to enrich user profile:', error);
+  }
+
+  // Store URL even if enrichment failed
+  const basicProfile = { url: profileUrl };
+  await setStorage({ userProfile: basicProfile });
+  return basicProfile;
+}
+
+// Build user context from enriched profile
+async function buildUserContextFromProfile() {
+  const profile = await getUserProfile();
+  if (!profile || !profile.headline) {
+    return await getUserContext(); // Fall back to manual context
+  }
+
+  let context = '';
+  if (profile.headline) {
+    context += `User's role: ${profile.headline}\n`;
+  }
+  if (profile.company) {
+    context += `User's company: ${profile.company}\n`;
+  }
+  if (profile.title) {
+    context += `User's job title: ${profile.title}\n`;
+  }
+
+  // Add any manual context as well
+  const manualContext = await getUserContext();
+  if (manualContext) {
+    context += `Additional context: ${manualContext}\n`;
+  }
+
+  return context || 'No specific context provided. Use general professional relevance.';
+}
+
+// ============================================
+// Conversation Profile Cache (from API interception)
+// ============================================
+
+async function getConversationProfiles() {
+  const { conversationProfiles } = await getStorage('conversationProfiles');
+  return conversationProfiles || {};
+}
+
+async function cacheConversationProfiles(newProfiles) {
+  const existing = await getConversationProfiles();
+  Object.assign(existing, newProfiles);
+  await setStorage({ conversationProfiles: existing });
+  console.log('[LinkedIn Triage] Cached', Object.keys(newProfiles).length, 'conversation profiles. Total:', Object.keys(existing).length);
+  return existing;
+}
+
+async function getProfileForConversation(conversationId) {
+  const profiles = await getConversationProfiles();
+  const participants = profiles[conversationId];
+  if (participants && participants.length > 0) {
+    return participants[0]; // Return first participant (non-self)
+  }
+  return null;
 }
 
 async function getClassifications() {
@@ -185,20 +288,119 @@ async function getStats() {
     SALES: 0,
     RECRUITING: 0,
     PERSONAL: 0,
-    EVENT: 0,
-    CONTENT: 0,
     OTHER: 0,
     total: 0
   };
 
   for (const classification of Object.values(classifications)) {
     if (classification && classification.category) {
-      counts[classification.category]++;
+      // Map old categories to new ones
+      const category = classification.category;
+      if (counts.hasOwnProperty(category)) {
+        counts[category]++;
+      } else {
+        counts.OTHER++;
+      }
       counts.total++;
     }
   }
 
   return counts;
+}
+
+// ============================================
+// Profile Cache Functions
+// ============================================
+
+async function getProfileCache() {
+  const { profileCache, profileCacheTime } = await getStorage([
+    'profileCache',
+    'profileCacheTime'
+  ]);
+
+  if (profileCacheTime) {
+    const expiryTime = PROFILE_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    if (Date.now() - profileCacheTime > expiryTime) {
+      await setStorage({ profileCache: {}, profileCacheTime: null });
+      return {};
+    }
+  }
+
+  return profileCache || {};
+}
+
+async function getCachedProfile(profileUrl) {
+  const cache = await getProfileCache();
+  return cache[profileUrl] || null;
+}
+
+async function cacheProfiles(profiles) {
+  const cache = await getProfileCache();
+  Object.assign(cache, profiles);
+  await setStorage({
+    profileCache: cache,
+    profileCacheTime: Date.now()
+  });
+}
+
+// ============================================
+// Profile Enrichment Functions
+// ============================================
+
+async function enrichProfiles(profileUrls) {
+  // Filter out already cached profiles and invalid URLs
+  const cache = await getProfileCache();
+  const urlsToEnrich = profileUrls.filter(url =>
+    url &&
+    url.startsWith('https://www.linkedin.com/in/') &&
+    !cache[url]
+  );
+
+  if (urlsToEnrich.length === 0) {
+    console.log('[LinkedIn Triage] All profiles already cached');
+    return cache;
+  }
+
+  console.log('[LinkedIn Triage] Enriching', urlsToEnrich.length, 'profiles via Vercel proxy');
+
+  try {
+    const response = await fetch(VERCEL_PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls: urlsToEnrich })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[LinkedIn Triage] Vercel proxy error:', response.status, errorText);
+      return cache;
+    }
+
+    const enrichedProfiles = await response.json();
+
+    // Cache the results
+    const newCache = {};
+    for (const profile of enrichedProfiles) {
+      if (profile && profile.url) {
+        newCache[profile.url] = {
+          headline: profile.headline || '',
+          title: profile.title || '',
+          company: profile.company || '',
+          location: profile.location || '',
+          connectionDegree: profile.connectionDegree || '',
+          enrichedAt: Date.now()
+        };
+      }
+    }
+
+    await cacheProfiles(newCache);
+    console.log('[LinkedIn Triage] Cached', Object.keys(newCache).length, 'enriched profiles');
+
+    return { ...cache, ...newCache };
+  } catch (error) {
+    console.error('[LinkedIn Triage] Profile enrichment failed:', error);
+    return cache;
+  }
 }
 
 // ============================================
@@ -210,7 +412,7 @@ async function classifyMessages(messages) {
 
   if (!apiKey) {
     console.warn('[LinkedIn Triage] No API key configured');
-    return createFallbackClassifications(messages);
+    return await createFallbackClassifications(messages);
   }
 
   const results = {};
@@ -222,7 +424,7 @@ async function classifyMessages(messages) {
       Object.assign(results, batchResults);
     } catch (error) {
       console.error('[LinkedIn Triage] Batch classification error:', error);
-      Object.assign(results, createFallbackClassifications(batch));
+      Object.assign(results, await createFallbackClassifications(batch));
     }
   }
 
@@ -230,45 +432,71 @@ async function classifyMessages(messages) {
 }
 
 async function classifyBatch(messages, apiKey) {
-  // Get user context
-  const userContext = await getUserContext();
+  // Get user context from their LinkedIn profile
+  const userContext = await buildUserContextFromProfile();
   let prompt = buildClassificationPrompt(userContext);
+
+  // Collect profile URLs and enrich them
+  const profileUrls = messages
+    .map(m => m.profileUrl)
+    .filter(url => url && url.startsWith('https://'));
+
+  // Try to enrich profiles (non-blocking, uses cache)
+  const profileCache = await enrichProfiles(profileUrls);
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const truncatedMessage = truncateMessage(msg.message, MAX_MESSAGE_LENGTH);
     const connectionInfo = msg.isFirstConnection ? '1st-degree connection' : 'NOT connected';
     const inMailInfo = msg.isInMail ? ' [INMAIL - paid message]' : '';
-    const senderTitle = msg.senderTitle ? msg.senderTitle : 'Unknown title';
 
-    prompt += '\n---\nMessage ' + (i + 1) + ':\n';
+    // Get enriched profile data if available
+    const enrichedProfile = msg.profileUrl ? profileCache[msg.profileUrl] : null;
+
+    // Use enriched headline/title if available, otherwise fall back to DOM-extracted title
+    let senderTitle = msg.senderTitle || '';
+    let senderCompany = '';
+    if (enrichedProfile) {
+      senderTitle = enrichedProfile.headline || enrichedProfile.title || senderTitle;
+      senderCompany = enrichedProfile.company || '';
+    }
+
+    // Analyze conversation dynamics
+    const userInitiated = msg.userInitiated || false;
+    const theirMessageCount = msg.theirMessageCount || 0;
+    const userMessageCount = msg.userMessageCount || 0;
+
+    prompt += '\n---\nConversation ' + (i + 1) + ':\n';
     prompt += 'From: ' + msg.participantName + '\n';
-    prompt += 'Title: ' + senderTitle + '\n';
+    prompt += 'Their Title/Headline: ' + (senderTitle || 'Unknown') + '\n';
+    if (senderCompany) {
+      prompt += 'Their Company: ' + senderCompany + '\n';
+    }
     prompt += 'Connection: ' + connectionInfo + inMailInfo + '\n';
-    prompt += 'Message: ' + truncatedMessage + '\n';
+
+    // Add conversation dynamics
+    if (userInitiated) {
+      prompt += 'IMPORTANT: User initiated this conversation (user messaged first)\n';
+    }
+    if (theirMessageCount > 0 && userMessageCount === 0) {
+      prompt += 'SIGNAL: They sent ' + theirMessageCount + ' messages, user has NOT replied\n';
+    } else if (theirMessageCount > 0 && userMessageCount > 0) {
+      prompt += 'Messages: ' + theirMessageCount + ' from them, ' + userMessageCount + ' from user\n';
+    }
+
+    prompt += 'Latest message preview: ' + truncatedMessage + '\n';
   }
 
   prompt += '\n---\n\nRespond with ONLY a JSON array, one object per message, in the same order. No other text.';
 
   try {
-    const response = await fetch(CLAUDE_API_URL, {
+    // Use Vercel proxy which has the API key
+    const response = await fetch(VERCEL_CLASSIFY_URL, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: MAX_TOKENS,
-        messages: [
-          {
-            role: 'user',
-            content: prompt
-          }
-        ]
-      })
+      body: JSON.stringify({ prompt })
     });
 
     if (!response.ok) {
@@ -279,7 +507,7 @@ async function classifyBatch(messages, apiKey) {
     const data = await response.json();
     const content = data.content && data.content[0] && data.content[0].text ? data.content[0].text : '';
 
-    const classifications = parseClassificationResponse(content, messages);
+    const classifications = await parseClassificationResponse(content, messages);
     return classifications;
   } catch (error) {
     console.error('[LinkedIn Triage] API request failed:', error);
@@ -287,7 +515,7 @@ async function classifyBatch(messages, apiKey) {
   }
 }
 
-function parseClassificationResponse(responseText, messages) {
+async function parseClassificationResponse(responseText, messages) {
   const results = {};
 
   try {
@@ -303,7 +531,93 @@ function parseClassificationResponse(responseText, messages) {
       jsonStr = arrayMatch[0];
     }
 
-    const parsed = JSON.parse(jsonStr);
+    // Fix common JSON issues from LLM output:
+    // 1. Smart quotes to regular quotes
+    jsonStr = jsonStr.replace(/[\u201C\u201D]/g, '"');
+    jsonStr = jsonStr.replace(/[\u2018\u2019]/g, "'");
+
+    // 2. Try to parse first, only fix if needed
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (initialError) {
+      console.log('[LinkedIn Triage] Initial parse failed, attempting fixes...');
+
+      // More aggressive fix: find patterns like "word" inside JSON strings and replace with 'word'
+      // Pattern: Look for quotes that are NOT at JSON structural positions
+      // JSON structural quote positions: after { or , or [ or :, or before } or , or ] or :
+
+      // First, replace obvious quoted words inside strings (e.g., "perks" -> 'perks')
+      // This regex looks for a quote followed by a word followed by a quote, but NOT at structural positions
+      jsonStr = jsonStr.replace(/"([^"]{1,30})"/g, function(match, content, offset) {
+        // Check what comes before and after this match
+        const before = jsonStr.slice(Math.max(0, offset - 10), offset);
+        const after = jsonStr.slice(offset + match.length, offset + match.length + 10);
+
+        // If this looks like a JSON key or value start/end, keep it
+        // JSON value start: after : or , or [ or {
+        // JSON value end: before , or ] or }
+        const isJsonStart = /[:\[{,]\s*$/.test(before);
+        const isJsonEnd = /^\s*[,\]}:]/.test(after);
+
+        if (isJsonStart && isJsonEnd) {
+          // This is a proper JSON string value
+          return match;
+        }
+
+        // This is likely a quoted word inside a string - replace with single quotes
+        return "'" + content + "'";
+      });
+
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (secondError) {
+        // Even more aggressive: manually fix by finding and replacing all nested quotes
+        let fixed = '';
+        let depth = 0; // Track JSON structure depth
+        let inString = false;
+        let stringStart = -1;
+
+        for (let i = 0; i < jsonStr.length; i++) {
+          const char = jsonStr[i];
+          const prevChar = i > 0 ? jsonStr[i - 1] : '';
+
+          // Skip escaped characters
+          if (prevChar === '\\' && char !== '\\') {
+            fixed += char;
+            continue;
+          }
+
+          if (char === '"') {
+            if (!inString) {
+              // Starting a string
+              inString = true;
+              stringStart = i;
+              fixed += char;
+            } else {
+              // Might be ending a string or a nested quote
+              // Look ahead to see if this is really the end
+              const rest = jsonStr.slice(i + 1);
+              const nextStructural = rest.match(/^\s*([,\]}\:])/);
+
+              if (nextStructural) {
+                // This is the end of the string
+                inString = false;
+                fixed += char;
+              } else {
+                // This is a nested quote - replace with apostrophe
+                fixed += "'";
+              }
+            }
+          } else {
+            fixed += char;
+          }
+        }
+
+        jsonStr = fixed;
+        parsed = JSON.parse(jsonStr);
+      }
+    }
 
     if (Array.isArray(parsed)) {
       for (let i = 0; i < Math.min(parsed.length, messages.length); i++) {
@@ -313,12 +627,40 @@ function parseClassificationResponse(responseText, messages) {
     }
   } catch (parseError) {
     console.error('[LinkedIn Triage] Failed to parse response:', parseError, responseText);
-    return createFallbackClassifications(messages);
+
+    // Try a more aggressive fix - parse each object individually
+    try {
+      const objectMatches = responseText.matchAll(/\{\s*"intent"[\s\S]*?"signals"\s*:\s*\[[^\]]*\]\s*\}/g);
+      let i = 0;
+      for (const match of objectMatches) {
+        if (i >= messages.length) break;
+        try {
+          let objStr = match[0];
+          // Clean up the object string
+          objStr = objStr.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
+          const obj = JSON.parse(objStr);
+          results[messages[i].conversationId] = validateClassification(obj);
+        } catch (e) {
+          // Skip this object, will use fallback
+        }
+        i++;
+      }
+    } catch (e) {
+      // Regex failed, use fallback for all
+    }
+
+    // Fill in any missing with fallbacks
+    for (const msg of messages) {
+      if (!results[msg.conversationId]) {
+        results[msg.conversationId] = await createFallbackClassification(msg);
+      }
+    }
+    return results;
   }
 
   for (const msg of messages) {
     if (!results[msg.conversationId]) {
-      results[msg.conversationId] = createFallbackClassification(msg);
+      results[msg.conversationId] = await createFallbackClassification(msg);
     }
   }
 
@@ -326,103 +668,149 @@ function parseClassificationResponse(responseText, messages) {
 }
 
 function validateClassification(obj) {
-  const validCategories = ['SALES', 'RECRUITING', 'PERSONAL', 'EVENT', 'CONTENT', 'OTHER'];
-  const validEfforts = ['template', 'personalized'];
+  // Only 4 valid categories
+  const validCategories = ['PROMOTIONS', 'SHOULD_RESPOND', 'WE_MET', 'IMPORTANT'];
+
+  // Get category directly
+  let category = (obj.category || 'SHOULD_RESPOND').toUpperCase();
+
+  // Map old category names to new ones
+  if (category === 'SALES') category = 'PROMOTIONS';
+  if (category === 'RECRUITING') category = 'SHOULD_RESPOND';
+  if (category === 'PERSONAL' || category === 'NETWORKING' || category === 'WARM_INTRO') category = 'WE_MET';
+  if (category === 'OTHER') category = 'SHOULD_RESPOND';
+  if (category === 'INVESTOR' || category === 'CUSTOMER') category = 'IMPORTANT';
+
+  if (!validCategories.includes(category)) {
+    category = 'SHOULD_RESPOND'; // Default - give benefit of the doubt
+  }
 
   return {
-    category: validCategories.includes(obj.category && obj.category.toUpperCase())
-      ? obj.category.toUpperCase()
-      : 'OTHER',
-    priority: Math.min(5, Math.max(1, parseInt(obj.priority) || 3)),
+    category: category,
+    priority: Math.min(10, Math.max(1, parseInt(obj.priority) || 5)),
     summary: typeof obj.summary === 'string'
-      ? obj.summary.slice(0, 100)
+      ? obj.summary.slice(0, 150)
       : 'Unable to summarize',
-    effort: validEfforts.includes(obj.effort && obj.effort.toLowerCase())
-      ? obj.effort.toLowerCase()
-      : 'template'
+    signals: Array.isArray(obj.signals) ? obj.signals.slice(0, 5) : []
   };
 }
 
-function createFallbackClassifications(messages) {
+async function createFallbackClassifications(messages) {
   const results = {};
   for (const msg of messages) {
-    results[msg.conversationId] = createFallbackClassification(msg);
+    results[msg.conversationId] = await createFallbackClassification(msg);
   }
   return results;
 }
 
-function createFallbackClassification(msg) {
+async function createFallbackClassification(msg) {
   const message = (msg.message || '').toLowerCase();
-  const title = (msg.senderTitle || '').toLowerCase();
+  let title = (msg.senderTitle || '').toLowerCase();
+  const signals = [];
 
-  let category = 'OTHER';
-  let priority = 3;
-  let effort = 'template';
+  // Try to get enriched profile data for better fallback classification
+  if (msg.profileUrl && msg.profileUrl.startsWith('https://')) {
+    const cachedProfile = await getCachedProfile(msg.profileUrl);
+    if (cachedProfile) {
+      title = (cachedProfile.headline || cachedProfile.title || title).toLowerCase();
+    }
+  }
 
-  // Sales title indicators (very strong signal)
+  // Default to SHOULD_RESPOND - give benefit of the doubt
+  let category = 'SHOULD_RESPOND';
+  let priority = 5;
+
+  // Check conversation dynamics first - these are most important
+  const userInitiated = msg.userInitiated || false;
+  const theirMessageCount = msg.theirMessageCount || 0;
+  const userMessageCount = msg.userMessageCount || 0;
+
+  // If user sent more messages, they care about this conversation
+  if (userMessageCount > theirMessageCount) {
+    signals.push('User mostly reaching out');
+    priority = 9;
+    category = 'IMPORTANT';
+  } else if (userInitiated) {
+    signals.push('User initiated');
+    priority = 10;
+    category = 'IMPORTANT';
+  }
+
+  if (theirMessageCount >= 3 && userMessageCount === 0) {
+    signals.push('Multiple follow-ups with no reply');
+    priority = Math.min(priority, 2);
+    category = 'PROMOTIONS';
+  }
+
+  // Check for warm intro signals - WE_MET
+  const warmIntroPatterns = ['said to reach out', 'mentioned you', 'recommended I contact', 'introduced me'];
+  if (warmIntroPatterns.some(p => message.includes(p))) {
+    signals.push('Warm intro mentioned');
+    category = 'WE_MET';
+    priority = Math.max(priority, 8);
+  }
+
+  // Check for event/meeting reference - WE_MET
+  const meetingPatterns = ['nice to meet you', 'great meeting you', 'good to see you at', 'after our conversation', 'following up on our'];
+  if (meetingPatterns.some(p => message.includes(p))) {
+    signals.push('References real meeting');
+    category = 'WE_MET';
+    priority = Math.max(priority, 8);
+  }
+
+  // Sales title indicators
   const salesTitles = ['account executive', 'sales', 'sdr', 'bdr', 'business development',
-    'growth', 'partnerships', 'customer success', 'revenue'];
+    'growth', 'partnerships', 'customer success', 'revenue', 'ae ', ' ae,', 'commercial'];
   const hasSalesTitle = salesTitles.some(function(t) { return title.includes(t); });
 
-  // Recruiting title indicators
-  const recruitingTitles = ['recruiter', 'talent', 'hr ', 'human resources', 'people operations',
-    'hiring', 'staffing'];
+  // Recruiting title indicators - these go to SHOULD_RESPOND, not PROMOTIONS
+  const recruitingTitles = ['recruiter', 'talent', 'hr ', 'human resources', 'people operations', 'hiring', 'staffing'];
   const hasRecruitingTitle = recruitingTitles.some(function(t) { return title.includes(t); });
 
-  // Sales message keywords
-  const salesKeywords = ['demo', 'schedule a call', 'would love to connect', 'help your company',
+  // Promotion message keywords
+  const promoKeywords = ['demo', 'schedule a call', 'help your company',
     'services', 'solution', 'platform', 'offer', 'discount', 'free trial', 'pricing',
-    'quick call', '15 minutes', 'i came across', 'reaching out because', 'love to chat',
-    'helping companies', 'i noticed'];
+    'quick call', '15 minutes', 'i came across', 'reaching out because',
+    'helping companies', 'any thoughts', 'checking in', 'circling back'];
 
-  // Recruiting message keywords
-  const recruitingKeywords = ['opportunity', 'position', 'hiring', 'role', 'job', 'recruit',
-    'candidate', 'talent', 'career', 'compensation', 'salary', 'your background',
-    'perfect fit', 'exciting role'];
-
-  // Event keywords
-  const eventKeywords = ['event', 'webinar', 'conference', 'meetup', 'invitation', 'join us',
-    'register', 'rsvp', 'summit', 'workshop'];
-
-  // InMail is almost always sales or recruiting
-  if (msg.isInMail) {
-    if (hasRecruitingTitle) {
-      category = 'RECRUITING';
-      priority = 2;
-    } else {
-      category = 'SALES';
-      priority = 1;
+  // Only apply title-based classification if user didn't initiate and no meeting reference
+  if (!userInitiated && category !== 'WE_MET') {
+    // InMail is often promotions
+    if (msg.isInMail) {
+      signals.push('InMail (paid message)');
+      if (hasRecruitingTitle) {
+        category = 'SHOULD_RESPOND';
+        priority = 5;
+      } else {
+        category = 'PROMOTIONS';
+        priority = 3;
+      }
     }
-    effort = 'template';
-  }
-  // Sales detection
-  else if (hasSalesTitle || salesKeywords.some(function(kw) { return message.includes(kw); })) {
-    category = 'SALES';
-    priority = 1;
-    effort = 'template';
-  }
-  // Recruiting detection
-  else if (hasRecruitingTitle || recruitingKeywords.some(function(kw) { return message.includes(kw); })) {
-    category = 'RECRUITING';
-    priority = 2;
-  }
-  // Event detection
-  else if (eventKeywords.some(function(kw) { return message.includes(kw); })) {
-    category = 'EVENT';
-    priority = 2;
-  }
-  // First connections without sales signals are likely personal
-  else if (msg.isFirstConnection) {
-    category = 'PERSONAL';
-    priority = 4;
-    effort = 'personalized';
+    // Sales title = promotions
+    else if (hasSalesTitle) {
+      signals.push('Sales title');
+      category = 'PROMOTIONS';
+      priority = 2;
+    }
+    // Recruiting title = should respond (job opportunities)
+    else if (hasRecruitingTitle) {
+      signals.push('Recruiter');
+      category = 'SHOULD_RESPOND';
+      priority = 5;
+    }
+    // Promo keywords in message
+    else if (promoKeywords.some(function(kw) { return message.includes(kw); })) {
+      signals.push('Promo language detected');
+      category = 'PROMOTIONS';
+      priority = 3;
+    }
   }
 
   return {
     category: category,
     priority: priority,
     summary: 'Classification unavailable - check message manually',
-    effort: effort
+    signals: signals
   };
 }
 
@@ -484,6 +872,20 @@ async function handleMessage(message, sender) {
       case MESSAGES.SET_USER_CONTEXT:
         await setUserContext(message.userContext);
         return { success: true };
+
+      case MESSAGES.SET_USER_PROFILE:
+        const profile = await setUserProfile(message.profileUrl);
+        return { success: true, profile };
+
+      case MESSAGES.GET_USER_PROFILE:
+        return { profile: await getUserProfile() };
+
+      case MESSAGES.CACHE_CONVERSATION_PROFILES:
+        await cacheConversationProfiles(message.conversationProfiles);
+        return { success: true };
+
+      case MESSAGES.GET_CONVERSATION_PROFILES:
+        return { conversationProfiles: await getConversationProfiles() };
 
       case 'GET_STATS':
         return { stats: await getStats() };

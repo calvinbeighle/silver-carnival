@@ -202,6 +202,22 @@
   font-style: italic;
 }
 
+.li-triage-tooltip-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.li-triage-signal {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #475569;
+}
+
 /* ============================================
    Responsive adjustments for LinkedIn overlay
    ============================================ */
@@ -302,5 +318,11 @@ body.theme--dark .li-triage-tooltip-category,
 
 body.theme--dark .li-triage-tooltip-summary,
 .theme--dark .li-triage-tooltip-summary {
+  color: #b0b7bf;
+}
+
+body.theme--dark .li-triage-signal,
+.theme--dark .li-triage-signal {
+  background: #38434f;
   color: #b0b7bf;
 }

@@ -5,11 +5,13 @@
   "description": "AI-powered inbox triage for LinkedIn messages. Color-code, filter, and summarize your messages instantly.",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "webRequest"
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
-    "https://api.anthropic.com/*"
+    "https://api.anthropic.com/*",
+    "https://*.vercel.app/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.js"
@@ -22,6 +24,14 @@
       ],
       "js": ["src/content/inbox-modifier.js"],
       "css": ["src/content/styles.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.linkedin.com/mynetwork/*",
+        "https://www.linkedin.com/mynetwork*"
+      ],
+      "js": ["src/content/invitations-modifier.js"],
       "run_at": "document_idle"
     }
   ],
@@ -37,5 +47,11 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/api-interceptor.js"],
+      "matches": ["https://www.linkedin.com/*"]
+    }
+  ]
 }

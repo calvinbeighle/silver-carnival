@@ -241,12 +241,10 @@ body {
   color: #64748b;
 }
 
-.stat-personal .stat-count { color: #22c55e; }
-.stat-recruiting .stat-count { color: #eab308; }
-.stat-sales .stat-count { color: #ef4444; }
-.stat-event .stat-count { color: #3b82f6; }
-.stat-content .stat-count { color: #8b5cf6; }
-.stat-other .stat-count { color: #6b7280; }
+.stat-important .stat-count { color: #3b82f6; }
+.stat-shouldrespond .stat-count { color: #22c55e; }
+.stat-wemet .stat-count { color: #eab308; }
+.stat-promotions .stat-count { color: #ef4444; }
 
 .stat-total {
   text-align: center;

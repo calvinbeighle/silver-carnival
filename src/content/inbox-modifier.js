@@ -9,6 +9,89 @@
   console.log('[LinkedIn Triage] Content script loaded');
 
   // ============================================
+  // Inject API Interceptor into page context
+  // ============================================
+
+  function injectApiInterceptor() {
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL('src/content/api-interceptor.js');
+    script.onload = function() {
+      console.log('[LinkedIn Triage] API Interceptor injected');
+      this.remove();
+    };
+    (document.head || document.documentElement).appendChild(script);
+  }
+
+  // Inject immediately
+  injectApiInterceptor();
+
+  // ============================================
+  // Listen for intercepted profile data
+  // ============================================
+
+  // Store for profiles extracted from API
+  let interceptedProfiles = {};
+  let conversationProfileMap = {};
+  // Store for conversation dynamics (message counts, who initiated, etc.)
+  let conversationDynamics = {};
+
+  window.addEventListener('message', function(event) {
+    if (event.source !== window) return;
+    if (event.data.type !== 'LINKEDIN_TRIAGE_PROFILE_DATA') return;
+
+    console.log('[LinkedIn Triage] Received intercepted profile data:', event.data);
+
+    // Merge new profiles
+    if (event.data.profiles) {
+      Object.assign(interceptedProfiles, event.data.profiles);
+      console.log('[LinkedIn Triage] Total profiles cached:', Object.keys(interceptedProfiles).length);
+    }
+
+    // Merge conversation-to-profile mappings
+    if (event.data.conversationProfiles) {
+      Object.assign(conversationProfileMap, event.data.conversationProfiles);
+      console.log('[LinkedIn Triage] Total conversation mappings:', Object.keys(conversationProfileMap).length);
+
+      // Send to background for caching
+      chrome.runtime.sendMessage({
+        type: MESSAGES.CACHE_CONVERSATION_PROFILES,
+        conversationProfiles: event.data.conversationProfiles
+      }).catch(() => {});
+    }
+
+    // Merge conversation dynamics
+    if (event.data.conversationDynamics) {
+      Object.assign(conversationDynamics, event.data.conversationDynamics);
+      console.log('[LinkedIn Triage] Total conversation dynamics:', Object.keys(conversationDynamics).length);
+    }
+
+    // Re-process conversations with new data
+    if (Object.keys(event.data.conversationProfiles || {}).length > 0 || Object.keys(event.data.conversationDynamics || {}).length > 0) {
+      setTimeout(processConversations, 100);
+    }
+  });
+
+  // Helper to get profile for a conversation
+  function getProfileForConversation(conversationId) {
+    const participants = conversationProfileMap[conversationId];
+    if (participants && participants.length > 0) {
+      // Return the first non-self participant
+      // TODO: Could filter out current user
+      return participants[0];
+    }
+    return null;
+  }
+
+  // Helper to get dynamics for a conversation
+  function getDynamicsForConversation(conversationId) {
+    return conversationDynamics[conversationId] || {
+      userInitiated: false,
+      theirMessageCount: 0,
+      userMessageCount: 0
+    };
+  }
+
+  // ============================================
   // Constants
   // ============================================
 
@@ -16,7 +99,11 @@
     CLASSIFY_MESSAGES: 'CLASSIFY_MESSAGES',
     GET_CLASSIFICATIONS: 'GET_CLASSIFICATIONS',
     UPDATE_FILTERS: 'UPDATE_FILTERS',
-    GET_FILTERS: 'GET_FILTERS'
+    GET_FILTERS: 'GET_FILTERS',
+    ENRICH_PROFILES: 'ENRICH_PROFILES',
+    SET_USER_PROFILE: 'SET_USER_PROFILE',
+    GET_USER_PROFILE: 'GET_USER_PROFILE',
+    CACHE_CONVERSATION_PROFILES: 'CACHE_CONVERSATION_PROFILES'
   };
 
   // Multiple selector options for resilience against LinkedIn DOM changes
@@ -76,30 +163,24 @@
   };
 
   const CategoryColors = {
-    SALES: '#ef4444',
-    RECRUITING: '#eab308',
-    PERSONAL: '#22c55e',
-    EVENT: '#3b82f6',
-    CONTENT: '#8b5cf6',
-    OTHER: '#6b7280'
+    PROMOTIONS: '#ef4444',
+    SHOULD_RESPOND: '#22c55e',
+    WE_MET: '#eab308',
+    IMPORTANT: '#3b82f6'
   };
 
   const CategoryLabels = {
-    SALES: 'Sales',
-    RECRUITING: 'Recruiting',
-    PERSONAL: 'Personal',
-    EVENT: 'Event',
-    CONTENT: 'Content',
-    OTHER: 'Other'
+    PROMOTIONS: 'Promotions',
+    SHOULD_RESPOND: 'Possible Response',
+    WE_MET: 'We Met',
+    IMPORTANT: 'Important'
   };
 
   const DefaultFilters = {
-    SALES: false,
-    RECRUITING: true,
-    PERSONAL: true,
-    EVENT: false,
-    CONTENT: true,
-    OTHER: true
+    PROMOTIONS: false,
+    SHOULD_RESPOND: true,
+    WE_MET: true,
+    IMPORTANT: true
   };
 
   // ============================================
@@ -141,7 +222,7 @@
 
   function parseConversation(conversationElement) {
     try {
-      // Get conversation ID from link
+      // Get conversation ID and profile URL from link
       const link = conversationElement.querySelector('a[href*="/messaging/thread/"]') ||
                    conversationElement.querySelector('a[href*="messaging"]') ||
                    conversationElement.closest('a[href*="/messaging/thread/"]');
@@ -163,13 +244,28 @@
           generateIdFromContent(conversationElement);
       }
 
+      // Get profile data from intercepted API responses
+      let profileUrl = null;
+      let senderHeadline = '';
+      const interceptedProfile = getProfileForConversation(conversationId);
+      if (interceptedProfile) {
+        profileUrl = interceptedProfile.profileUrl;
+        senderHeadline = interceptedProfile.headline || '';
+        console.log('[LinkedIn Triage] Found intercepted profile for', conversationId, ':', interceptedProfile);
+      }
+
       // Get participant name
       const nameElement = findElement(SELECTORS.nameSelectors, conversationElement);
       const participantName = nameElement ? nameElement.textContent.trim() : 'Unknown';
 
-      // Get sender's title/headline
-      const titleElement = findElement(SELECTORS.titleSelectors, conversationElement);
-      let senderTitle = titleElement ? titleElement.textContent.trim() : '';
+      // Get sender's title/headline - prefer intercepted data
+      let senderTitle = senderHeadline; // From intercepted API data
+
+      // Fallback to DOM extraction if no intercepted data
+      if (!senderTitle) {
+        const titleElement = findElement(SELECTORS.titleSelectors, conversationElement);
+        senderTitle = titleElement ? titleElement.textContent.trim() : '';
+      }
 
       // Also try to extract from aria-label or other attributes
       if (!senderTitle) {
@@ -206,6 +302,7 @@
       return {
         conversationId,
         participantName,
+        profileUrl,
         senderTitle,
         lastMessagePreview,
         fullMessage: lastMessagePreview,
@@ -302,6 +399,75 @@
   }
 
   // ============================================
+  // User Profile Extraction
+  // ============================================
+
+  function extractCurrentUserProfile() {
+    // Try to get the user's profile URL from the "Me" dropdown
+    // The profile link is in the nav menu
+    const meButton = document.querySelector('.global-nav__me-photo');
+    if (meButton) {
+      const userName = meButton.getAttribute('alt');
+      console.log('[LinkedIn Triage] Found current user:', userName);
+    }
+
+    // Look for profile link in the dropdown or nav
+    const profileLinks = [
+      // Direct profile link in nav
+      document.querySelector('a[href*="/in/"][data-control-name="identity_profile_photo"]'),
+      // Profile link in me menu
+      document.querySelector('.global-nav__me a[href*="/in/"]'),
+      // Any link that goes to /in/ in the header area
+      document.querySelector('header a[href*="/in/"]'),
+      document.querySelector('nav a[href*="/in/"]'),
+      // Fallback: look in the global nav area
+      document.querySelector('.global-nav a[href*="/in/"]')
+    ];
+
+    for (const link of profileLinks) {
+      if (link) {
+        const href = link.getAttribute('href');
+        const match = href.match(/\/in\/([^/?]+)/);
+        if (match) {
+          return 'https://www.linkedin.com/in/' + match[1];
+        }
+      }
+    }
+
+    // Alternative: Try to find it from any profile-related element
+    const allProfileLinks = document.querySelectorAll('a[href*="/in/"]');
+    for (const link of allProfileLinks) {
+      const href = link.getAttribute('href');
+      // Skip other people's profiles (in messaging, etc)
+      if (href.includes('/in/') && link.closest('.global-nav, header, nav')) {
+        const match = href.match(/\/in\/([^/?]+)/);
+        if (match) {
+          return 'https://www.linkedin.com/in/' + match[1];
+        }
+      }
+    }
+
+    return null;
+  }
+
+  async function sendUserProfileToBackground() {
+    const profileUrl = extractCurrentUserProfile();
+    if (profileUrl) {
+      console.log('[LinkedIn Triage] Sending user profile to background:', profileUrl);
+      try {
+        await chrome.runtime.sendMessage({
+          type: MESSAGES.SET_USER_PROFILE,
+          profileUrl: profileUrl
+        });
+      } catch (error) {
+        console.error('[LinkedIn Triage] Error sending user profile:', error);
+      }
+    } else {
+      console.log('[LinkedIn Triage] Could not find current user profile URL');
+    }
+  }
+
+  // ============================================
   // Main Content Script Logic
   // ============================================
 
@@ -318,6 +484,9 @@
     console.log('[LinkedIn Triage] Initializing...');
 
     await loadSavedData();
+
+    // Extract and send current user's profile for context
+    await sendUserProfileToBackground();
 
     // Wait for LinkedIn to fully load with retries
     const loaded = await waitForLinkedInLoad();
@@ -380,6 +549,13 @@
         classifications = classResponse.classifications;
         console.log('[LinkedIn Triage] Loaded', Object.keys(classifications).length, 'cached classifications');
       }
+
+      // Load cached conversation profiles from API interception
+      const profileResponse = await chrome.runtime.sendMessage({ type: MESSAGES.GET_CONVERSATION_PROFILES });
+      if (profileResponse && profileResponse.conversationProfiles) {
+        conversationProfileMap = profileResponse.conversationProfiles;
+        console.log('[LinkedIn Triage] Loaded', Object.keys(conversationProfileMap).length, 'cached conversation profiles');
+      }
     } catch (error) {
       console.error('[LinkedIn Triage] Error loading saved data:', error);
     }
@@ -412,13 +588,21 @@
 
   async function requestClassification(conversations) {
     const messagesToClassify = conversations.map(function(c) {
+      // Get conversation dynamics from intercepted API data
+      const dynamics = getDynamicsForConversation(c.conversationId);
+
       return {
         conversationId: c.conversationId,
         participantName: c.participantName,
+        profileUrl: c.profileUrl || null,
         senderTitle: c.senderTitle || '',
         message: c.lastMessagePreview,
         isFirstConnection: c.isFirstConnection,
-        isInMail: c.isInMail || false
+        isInMail: c.isInMail || false,
+        // Include conversation dynamics for better classification
+        userInitiated: dynamics.userInitiated,
+        theirMessageCount: dynamics.theirMessageCount,
+        userMessageCount: dynamics.userMessageCount
       };
     });
 
@@ -478,10 +662,11 @@
     priority.textContent = getPriorityIndicator(classification.priority);
     indicator.appendChild(priority);
 
-    // Tooltip
-    indicator.title = CategoryLabels[classification.category] + ': ' + classification.summary + '\n' +
-      'Priority: ' + classification.priority + '/5 | ' +
-      (classification.effort === 'template' ? 'Mass-sent' : 'Personalized');
+    // Tooltip - show category and priority
+    const intentLabel = classification.category;
+    indicator.title = intentLabel + ': ' + classification.summary + '\n' +
+      'Priority: ' + classification.priority + '/10 (' + getPriorityLabel(classification.priority) + ')' +
+      (classification.signals && classification.signals.length > 0 ? '\nSignals: ' + classification.signals.join(', ') : '');
 
     // Insert at the beginning of the conversation item
     element.style.position = 'relative';
@@ -499,15 +684,20 @@
 
     const tooltip = document.createElement('div');
     tooltip.className = 'li-triage-tooltip';
+
+    const categoryLabel = classification.category;
+    const signalsHtml = classification.signals && classification.signals.length > 0
+      ? '<div class="li-triage-tooltip-signals">' + classification.signals.map(s => '<span class="li-triage-signal">' + escapeHtml(s) + '</span>').join('') + '</div>'
+      : '';
+
     tooltip.innerHTML =
       '<div class="li-triage-tooltip-header" style="border-left: 3px solid ' + CategoryColors[classification.category] + '">' +
-        '<span class="li-triage-tooltip-category">' + CategoryLabels[classification.category] + '</span>' +
+        '<span class="li-triage-tooltip-category">' + escapeHtml(categoryLabel) + '</span>' +
         '<span class="li-triage-tooltip-priority">' + getPriorityIndicator(classification.priority) + '</span>' +
       '</div>' +
       '<div class="li-triage-tooltip-summary">' + escapeHtml(classification.summary) + '</div>' +
-      '<div class="li-triage-tooltip-meta">' +
-        (classification.effort === 'template' ? 'Likely mass-sent' : 'Appears personalized') +
-      '</div>';
+      signalsHtml +
+      '<div class="li-triage-tooltip-meta">Priority: ' + classification.priority + '/10</div>';
 
     element.appendChild(tooltip);
     element.classList.add('li-triage-has-tooltip');
@@ -551,8 +741,19 @@
   }
 
   function getPriorityIndicator(priority) {
-    const filled = Math.min(5, Math.max(0, priority));
-    return '\u2605'.repeat(filled) + '\u2606'.repeat(5 - filled);
+    // Show stars based on priority (1-10 scale, higher = more important)
+    const p = Math.min(10, Math.max(1, priority));
+    const starCount = Math.ceil(p / 2); // 1-2 = 1 star, 3-4 = 2 stars, etc.
+    return '★'.repeat(starCount) + '☆'.repeat(5 - starCount);
+  }
+
+  function getPriorityLabel(priority) {
+    const p = Math.min(10, Math.max(1, priority));
+    if (p >= 9) return 'Very High';
+    if (p >= 7) return 'High';
+    if (p >= 5) return 'Medium';
+    if (p >= 3) return 'Low';
+    return 'Very Low';
   }
 
   function injectFilterToolbar() {
@@ -564,7 +765,7 @@
     const toolbar = document.createElement('div');
     toolbar.className = 'li-triage-toolbar';
 
-    const categories = ['PERSONAL', 'RECRUITING', 'SALES', 'EVENT', 'CONTENT', 'OTHER'];
+    const categories = ['IMPORTANT', 'SHOULD_RESPOND', 'WE_MET', 'PROMOTIONS'];
 
     for (const category of categories) {
       const button = document.createElement('button');
@@ -599,13 +800,13 @@
     const bulkActions = document.createElement('div');
     bulkActions.className = 'li-triage-bulk-actions';
 
-    const archiveSalesBtn = document.createElement('button');
-    archiveSalesBtn.className = 'li-triage-bulk-btn';
-    archiveSalesBtn.textContent = 'Hide All Sales';
-    archiveSalesBtn.addEventListener('click', function() {
-      bulkHideCategory('SALES');
+    const archivePromosBtn = document.createElement('button');
+    archivePromosBtn.className = 'li-triage-bulk-btn';
+    archivePromosBtn.textContent = 'Hide Promotions';
+    archivePromosBtn.addEventListener('click', function() {
+      bulkHideCategory('PROMOTIONS');
     });
-    bulkActions.appendChild(archiveSalesBtn);
+    bulkActions.appendChild(archivePromosBtn);
 
     toolbar.appendChild(bulkActions);
 

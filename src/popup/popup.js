@@ -11,42 +11,33 @@
     GET_CLASSIFICATIONS: 'GET_CLASSIFICATIONS',
     UPDATE_FILTERS: 'UPDATE_FILTERS',
     GET_FILTERS: 'GET_FILTERS',
-    GET_API_KEY: 'GET_API_KEY',
-    SET_API_KEY: 'SET_API_KEY',
     CLEAR_CACHE: 'CLEAR_CACHE',
     GET_USER_CONTEXT: 'GET_USER_CONTEXT',
     SET_USER_CONTEXT: 'SET_USER_CONTEXT'
   };
 
   const CategoryColors = {
-    SALES: '#ef4444',
-    RECRUITING: '#eab308',
-    PERSONAL: '#22c55e',
-    EVENT: '#3b82f6',
-    CONTENT: '#8b5cf6',
-    OTHER: '#6b7280'
+    PROMOTIONS: '#ef4444',
+    SHOULD_RESPOND: '#22c55e',
+    WE_MET: '#eab308',
+    IMPORTANT: '#3b82f6'
   };
 
   const CategoryLabels = {
-    SALES: 'Sales',
-    RECRUITING: 'Recruiting',
-    PERSONAL: 'Personal',
-    EVENT: 'Event',
-    CONTENT: 'Content',
-    OTHER: 'Other'
+    PROMOTIONS: 'Promotions',
+    SHOULD_RESPOND: 'Possible Response',
+    WE_MET: 'We Met',
+    IMPORTANT: 'Important'
   };
 
   const DefaultFilters = {
-    SALES: false,
-    RECRUITING: true,
-    PERSONAL: true,
-    EVENT: false,
-    CONTENT: true,
-    OTHER: true
+    PROMOTIONS: false,
+    SHOULD_RESPOND: true,
+    WE_MET: true,
+    IMPORTANT: true
   };
 
   // DOM Elements
-  let apiStatus, apiForm, apiKeyInput, saveApiKeyBtn, changeApiKeyBtn;
   let filterToggles, clearCacheBtn, refreshBtn, totalCountEl;
   let userContextInput, saveContextBtn;
 
@@ -58,11 +49,6 @@
    */
   async function init() {
     // Get DOM elements
-    apiStatus = document.getElementById('api-status');
-    apiForm = document.getElementById('api-form');
-    apiKeyInput = document.getElementById('api-key-input');
-    saveApiKeyBtn = document.getElementById('save-api-key');
-    changeApiKeyBtn = document.getElementById('change-api-key');
     filterToggles = document.getElementById('filter-toggles');
     clearCacheBtn = document.getElementById('clear-cache');
     refreshBtn = document.getElementById('refresh');
@@ -70,13 +56,6 @@
     userContextInput = document.getElementById('user-context');
     saveContextBtn = document.getElementById('save-context');
 
-    // Check if this is onboarding
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('onboarding') === 'true') {
-      document.body.classList.add('onboarding');
-    }
-
-    await checkApiKey();
     await loadFilters();
     await loadStats();
     await loadUserContext();
@@ -115,46 +94,6 @@
   }
 
   /**
-   * Check if API key is configured
-   */
-  async function checkApiKey() {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: MESSAGES.GET_API_KEY });
-
-      if (response && response.hasApiKey) {
-        showApiKeyConfigured();
-      } else {
-        showApiKeyNeeded();
-      }
-    } catch (error) {
-      console.error('Error checking API key:', error);
-      showApiKeyNeeded();
-    }
-  }
-
-  /**
-   * Show UI for configured API key
-   */
-  function showApiKeyConfigured() {
-    apiStatus.classList.add('connected');
-    apiStatus.classList.remove('disconnected');
-    apiStatus.querySelector('.status-text').textContent = 'API Key configured';
-    apiForm.classList.add('hidden');
-    changeApiKeyBtn.classList.remove('hidden');
-  }
-
-  /**
-   * Show UI for missing API key
-   */
-  function showApiKeyNeeded() {
-    apiStatus.classList.add('disconnected');
-    apiStatus.classList.remove('connected');
-    apiStatus.querySelector('.status-text').textContent = 'API Key required';
-    apiForm.classList.remove('hidden');
-    changeApiKeyBtn.classList.add('hidden');
-  }
-
-  /**
    * Load filter settings
    */
   async function loadFilters() {
@@ -174,8 +113,9 @@
    * Render filter toggle switches
    */
   function renderFilterToggles() {
-    const categories = ['PERSONAL', 'RECRUITING', 'SALES', 'EVENT', 'CONTENT', 'OTHER'];
+    const categories = ['IMPORTANT', 'SHOULD_RESPOND', 'WE_MET', 'PROMOTIONS'];
 
+    if (!filterToggles) return;
     filterToggles.innerHTML = '';
 
     for (const category of categories) {
@@ -238,15 +178,11 @@
         const personalEl = document.querySelector('.stat-personal .stat-count');
         const recruitingEl = document.querySelector('.stat-recruiting .stat-count');
         const salesEl = document.querySelector('.stat-sales .stat-count');
-        const eventEl = document.querySelector('.stat-event .stat-count');
-        const contentEl = document.querySelector('.stat-content .stat-count');
         const otherEl = document.querySelector('.stat-other .stat-count');
 
         if (personalEl) personalEl.textContent = stats.PERSONAL || 0;
         if (recruitingEl) recruitingEl.textContent = stats.RECRUITING || 0;
         if (salesEl) salesEl.textContent = stats.SALES || 0;
-        if (eventEl) eventEl.textContent = stats.EVENT || 0;
-        if (contentEl) contentEl.textContent = stats.CONTENT || 0;
         if (otherEl) otherEl.textContent = stats.OTHER || 0;
         if (totalCountEl) totalCountEl.textContent = stats.total || 0;
       }
@@ -259,42 +195,8 @@
    * Setup event listeners
    */
   function setupEventListeners() {
-    // Save API key
-    saveApiKeyBtn.addEventListener('click', async function() {
-      const key = apiKeyInput.value.trim();
-
-      if (!key) {
-        showToast('Please enter an API key', 'error');
-        return;
-      }
-
-      if (!key.startsWith('sk-ant-')) {
-        showToast('Invalid API key format', 'error');
-        return;
-      }
-
-      try {
-        await chrome.runtime.sendMessage({
-          type: MESSAGES.SET_API_KEY,
-          apiKey: key
-        });
-
-        showApiKeyConfigured();
-        showToast('API key saved!', 'success');
-        apiKeyInput.value = '';
-      } catch (error) {
-        console.error('Error saving API key:', error);
-        showToast('Failed to save API key', 'error');
-      }
-    });
-
-    // Change API key
-    changeApiKeyBtn.addEventListener('click', function() {
-      showApiKeyNeeded();
-    });
-
     // Clear cache
-    clearCacheBtn.addEventListener('click', async function() {
+    if (clearCacheBtn) clearCacheBtn.addEventListener('click', async function() {
       try {
         await chrome.runtime.sendMessage({ type: MESSAGES.CLEAR_CACHE });
         await loadStats();
@@ -306,16 +208,18 @@
     });
 
     // Refresh page
-    refreshBtn.addEventListener('click', async function() {
+    if (refreshBtn) refreshBtn.addEventListener('click', async function() {
       try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tabs[0] && tabs[0].url && tabs[0].url.includes('linkedin.com')) {
-          await chrome.tabs.sendMessage(tabs[0].id, { type: 'REFRESH' });
-          showToast('Refreshing...', 'success');
+          // Also reload the tab to get fresh data
+          await chrome.tabs.reload(tabs[0].id);
+          showToast('Refreshing LinkedIn...', 'success');
         } else {
           showToast('Open LinkedIn messaging first', 'error');
         }
       } catch (error) {
+        console.error('Refresh error:', error);
         showToast('Could not refresh - open LinkedIn messaging', 'error');
       }
     });

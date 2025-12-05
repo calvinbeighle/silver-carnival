@@ -13,73 +13,28 @@
       <p class="subtitle">AI-powered inbox management</p>
     </header>
 
-    <!-- Onboarding / API Key Section -->
-    <section id="api-section" class="section">
-      <h2>API Key</h2>
-      <div id="api-status" class="api-status">
-        <span class="status-dot"></span>
-        <span class="status-text">Checking...</span>
-      </div>
-
-      <div id="api-form" class="api-form hidden">
-        <p class="help-text">
-          To use LinkedIn Triage, you need a Claude API key:
-        </p>
-        <ol class="steps">
-          <li>Go to <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a></li>
-          <li>Create a new API key</li>
-          <li>Paste it below</li>
-        </ol>
-        <div class="input-group">
-          <input type="password" id="api-key-input" placeholder="sk-ant-api...">
-          <button id="save-api-key" class="btn btn-primary">Save</button>
-        </div>
-        <p class="privacy-note">
-          Your key is stored locally and only used to contact Claude directly.
-        </p>
-      </div>
-
-      <button id="change-api-key" class="btn btn-link hidden">Change API Key</button>
-    </section>
-
     <!-- Stats Section -->
     <section id="stats-section" class="section">
       <h2>Inbox Stats</h2>
       <div id="stats" class="stats-grid">
-        <div class="stat-item stat-personal">
+        <div class="stat-item stat-important">
           <span class="stat-count">-</span>
-          <span class="stat-label">Personal</span>
+          <span class="stat-label">Important</span>
         </div>
-        <div class="stat-item stat-recruiting">
+        <div class="stat-item stat-shouldrespond">
           <span class="stat-count">-</span>
-          <span class="stat-label">Recruiting</span>
+          <span class="stat-label">Possible Response</span>
         </div>
-        <div class="stat-item stat-sales">
+        <div class="stat-item stat-wemet">
           <span class="stat-count">-</span>
-          <span class="stat-label">Sales</span>
+          <span class="stat-label">We Met</span>
         </div>
-        <div class="stat-item stat-event">
+        <div class="stat-item stat-promotions">
           <span class="stat-count">-</span>
-          <span class="stat-label">Events</span>
-        </div>
-        <div class="stat-item stat-content">
-          <span class="stat-count">-</span>
-          <span class="stat-label">Content</span>
-        </div>
-        <div class="stat-item stat-other">
-          <span class="stat-count">-</span>
-          <span class="stat-label">Other</span>
+          <span class="stat-label">Promotions</span>
         </div>
       </div>
       <p class="stat-total">Total categorized: <span id="total-count">-</span></p>
-    </section>
-
-    <!-- User Context Section -->
-    <section id="context-section" class="section">
-      <h2>Your Work Context</h2>
-      <p class="help-text">Help the AI understand what messages are relevant to you</p>
-      <textarea id="user-context" class="context-input" placeholder="e.g., I work in data center infrastructure and procurement. Messages about hardware, cooling systems, power distribution, or vendor partnerships are work-related. I'm currently in stealth mode building a startup."></textarea>
-      <button id="save-context" class="btn btn-secondary">Save Context</button>
     </section>
 
     <!-- Filter Defaults Section -->
