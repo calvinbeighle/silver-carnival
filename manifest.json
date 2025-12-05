@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "LinkedIn Inbox Triage",
+  "name": "LinkedIn Filter",
   "version": "1.0.0",
   "description": "AI-powered inbox triage for LinkedIn messages. Color-code, filter, and summarize your messages instantly.",
   "permissions": [
@@ -32,6 +32,7 @@
         "https://www.linkedin.com/mynetwork*"
       ],
       "js": ["src/content/invitations-modifier.js"],
+      "css": ["src/content/styles.css"],
       "run_at": "document_idle"
     }
   ],

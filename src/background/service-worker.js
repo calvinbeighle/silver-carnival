@@ -14,7 +14,7 @@ const MAX_MESSAGE_LENGTH = 2000;
 const CACHE_EXPIRY_DAYS = 7;
 
 // Vercel proxy URLs
-const VERCEL_BASE_URL = 'https://linked-in-management-extension-q9bfesmoj.vercel.app';
+const VERCEL_BASE_URL = 'https://linked-in-management-extension.vercel.app';
 const VERCEL_PROXY_URL = VERCEL_BASE_URL + '/api/enrich-profile';
 const VERCEL_CLASSIFY_URL = VERCEL_BASE_URL + '/api/classify';
 const PROFILE_CACHE_EXPIRY_DAYS = 30; // Cache profiles longer than classifications
@@ -96,13 +96,19 @@ Return valid JSON for each conversation:
   "signals": ["signal1", "signal2"]
 }
 
-THE KEY QUESTION: "Is this person likely trying to sell me something?"
+THE KEY QUESTION: "Is this person likely trying to sell ME something?"
 - If YES → PROMOTIONS (regardless of their title or seniority)
 - If NO, and you've met them → WE_MET
 - If NO, and worth responding → SHOULD_RESPOND
 - If NO, and user initiated or existing relationship → IMPORTANT
 
-CRITICAL: If the USER has been the one mostly reaching out (user sent more messages), this is NOT a promotion - the user clearly cares about this conversation. Likely IMPORTANT or SHOULD_RESPOND.
+CRITICAL RULES - NEVER MARK AS PROMOTIONS IF:
+1. The USER initiated the conversation (user messaged first) → IMPORTANT
+2. The USER sent more messages than the other person → IMPORTANT
+3. The USER is the one doing outreach/selling → This is the user's sales effort, mark as IMPORTANT
+4. The last message was sent BY the user → They're waiting for a reply, mark as SHOULD_RESPOND or IMPORTANT
+
+PROMOTIONS is ONLY for when SOMEONE ELSE is trying to sell TO the user, not when the user is reaching out to others.
 
 Be selective with IMPORTANT - less than 5% of messages qualify.
 
@@ -622,7 +628,9 @@ async function parseClassificationResponse(responseText, messages) {
     if (Array.isArray(parsed)) {
       for (let i = 0; i < Math.min(parsed.length, messages.length); i++) {
         const classification = validateClassification(parsed[i]);
-        results[messages[i].conversationId] = classification;
+        // Apply engagement-based overrides - user engagement trumps AI classification
+        const overridden = applyEngagementOverride(classification, messages[i]);
+        results[messages[i].conversationId] = overridden;
       }
     }
   } catch (parseError) {
@@ -639,7 +647,9 @@ async function parseClassificationResponse(responseText, messages) {
           // Clean up the object string
           objStr = objStr.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
           const obj = JSON.parse(objStr);
-          results[messages[i].conversationId] = validateClassification(obj);
+          const classification = validateClassification(obj);
+          // Apply engagement-based overrides
+          results[messages[i].conversationId] = applyEngagementOverride(classification, messages[i]);
         } catch (e) {
           // Skip this object, will use fallback
         }
@@ -665,6 +675,77 @@ async function parseClassificationResponse(responseText, messages) {
   }
 
   return results;
+}
+
+/**
+ * Apply engagement-based overrides to AI classification.
+ * User engagement signals ALWAYS trump AI classification.
+ * If the user has been actively messaging, it's NOT a promotion.
+ */
+function applyEngagementOverride(classification, msg) {
+  const userMessageCount = msg.userMessageCount || 0;
+  const theirMessageCount = msg.theirMessageCount || 0;
+  const userInitiated = msg.userInitiated || false;
+  const lastMessageByUser = msg.lastMessageByUser || false;
+
+  // Clone the classification to avoid mutation
+  const result = { ...classification };
+
+  console.log('[LinkedIn Triage] Checking engagement override for', msg.participantName,
+    '- userMsgs:', userMessageCount, 'theirMsgs:', theirMessageCount,
+    'userInitiated:', userInitiated, 'lastByUser:', lastMessageByUser,
+    'current category:', result.category);
+
+  // RULE 1: If user sent the last message, they're engaged - NEVER promotions
+  if (lastMessageByUser) {
+    if (result.category === 'PROMOTIONS') {
+      result.category = 'SHOULD_RESPOND'; // Waiting for their reply
+      result.priority = Math.max(result.priority, 7);
+      result.signals = [...(result.signals || []), 'User sent last message'];
+      console.log('[LinkedIn Triage] Override: User sent last message -> SHOULD_RESPOND');
+      return result;
+    }
+    // If already a good category, boost priority
+    result.priority = Math.max(result.priority, 7);
+  }
+
+  // RULE 2: If user sent more messages than them, this is IMPORTANT (user is reaching out)
+  if (userMessageCount > theirMessageCount && userMessageCount > 0) {
+    result.category = 'IMPORTANT';
+    result.priority = Math.max(result.priority, 9);
+    result.signals = [...(result.signals || []), 'User sent more messages'];
+    console.log('[LinkedIn Triage] Override: User sent more messages -> IMPORTANT');
+    return result;
+  }
+
+  // RULE 3: If user initiated, this is IMPORTANT
+  if (userInitiated) {
+    result.category = 'IMPORTANT';
+    result.priority = Math.max(result.priority, 9);
+    result.signals = [...(result.signals || []), 'User initiated conversation'];
+    console.log('[LinkedIn Triage] Override: User initiated -> IMPORTANT');
+    return result;
+  }
+
+  // RULE 4: If user has replied at all, NEVER mark as PROMOTIONS
+  if (userMessageCount > 0 && result.category === 'PROMOTIONS') {
+    result.category = 'SHOULD_RESPOND';
+    result.priority = Math.max(result.priority, 6);
+    result.signals = [...(result.signals || []), 'User has engaged'];
+    console.log('[LinkedIn Triage] Override: User engaged, not promotions -> SHOULD_RESPOND');
+    return result;
+  }
+
+  // RULE 5: If they sent multiple messages with NO user reply, likely PROMOTIONS
+  if (theirMessageCount >= 2 && userMessageCount === 0 && !lastMessageByUser && result.category !== 'PROMOTIONS') {
+    result.category = 'PROMOTIONS';
+    result.priority = Math.min(result.priority, 3);
+    result.signals = [...(result.signals || []), 'Multiple unanswered follow-ups'];
+    console.log('[LinkedIn Triage] Override: Multiple unanswered messages -> PROMOTIONS');
+    return result;
+  }
+
+  return result;
 }
 
 function validateClassification(obj) {
@@ -725,6 +806,10 @@ async function createFallbackClassification(msg) {
   const theirMessageCount = msg.theirMessageCount || 0;
   const userMessageCount = msg.userMessageCount || 0;
 
+  // Check if user is engaged - NEVER mark as PROMOTIONS if user is active
+  const userIsEngaged = userMessageCount > 0;
+  const userSentLast = msg.lastMessageByUser || false;
+
   // If user sent more messages, they care about this conversation
   if (userMessageCount > theirMessageCount) {
     signals.push('User mostly reaching out');
@@ -734,8 +819,17 @@ async function createFallbackClassification(msg) {
     signals.push('User initiated');
     priority = 10;
     category = 'IMPORTANT';
+  } else if (userSentLast) {
+    signals.push('User sent last message');
+    priority = 7;
+    category = 'SHOULD_RESPOND'; // User is waiting for reply
+  } else if (userIsEngaged) {
+    signals.push('User has replied');
+    priority = 6;
+    category = 'SHOULD_RESPOND'; // Active conversation
   }
 
+  // Only mark as promotions if user has NOT engaged at all
   if (theirMessageCount >= 3 && userMessageCount === 0) {
     signals.push('Multiple follow-ups with no reply');
     priority = Math.min(priority, 2);
@@ -773,8 +867,9 @@ async function createFallbackClassification(msg) {
     'quick call', '15 minutes', 'i came across', 'reaching out because',
     'helping companies', 'any thoughts', 'checking in', 'circling back'];
 
-  // Only apply title-based classification if user didn't initiate and no meeting reference
-  if (!userInitiated && category !== 'WE_MET') {
+  // Only apply title-based classification if user is NOT engaged at all
+  // If user has sent any messages, they care about this conversation - don't mark as promotions
+  if (!userInitiated && !userIsEngaged && category !== 'WE_MET' && category !== 'IMPORTANT') {
     // InMail is often promotions
     if (msg.isInMail) {
       signals.push('InMail (paid message)');
@@ -945,12 +1040,4 @@ async function notifyAllTabs(type, data) {
 // Extension Lifecycle
 // ============================================
 
-chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === 'install') {
-    chrome.tabs.create({
-      url: chrome.runtime.getURL('src/popup/popup.html?onboarding=true')
-    });
-  }
-});
-
-console.log('[LinkedIn Triage] Service worker initialized');
+console.log('[LinkedIn Filter] Service worker initialized');

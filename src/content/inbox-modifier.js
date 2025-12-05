@@ -281,6 +281,27 @@
       const previewElement = findElement(SELECTORS.previewSelectors, conversationElement);
       const lastMessagePreview = previewElement ? previewElement.textContent.trim() : '';
 
+      // Detect if the last message was sent by the current user
+      // LinkedIn formats it as "You: message" or "Name: message" where Name is the current user
+      const userName = getCurrentUserName();
+      let lastMessageByUser = false;
+      let userMessageCount = 0;
+      let theirMessageCount = 0;
+
+      if (userName && lastMessagePreview) {
+        // Check if preview starts with "You:" or the user's name followed by ":"
+        const youPattern = /^You:\s/i;
+        const namePattern = new RegExp('^' + userName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':\\s', 'i');
+
+        if (youPattern.test(lastMessagePreview) || namePattern.test(lastMessagePreview)) {
+          lastMessageByUser = true;
+          userMessageCount = 1; // At least one message from user
+          console.log('[LinkedIn Triage] Detected: User sent last message to', participantName);
+        } else {
+          theirMessageCount = 1; // Last message from them
+        }
+      }
+
       // Check if this is an InMail (sponsored/paid message)
       const isInMail = conversationElement.textContent.toLowerCase().includes('inmail') ||
         conversationElement.querySelector('[class*="inmail"]') !== null ||
@@ -310,6 +331,9 @@
         isInMail,
         timestamp: parseTimestamp(timestampText),
         isUnread,
+        lastMessageByUser,
+        userMessageCount,
+        theirMessageCount,
         element: conversationElement
       };
     } catch (error) {
@@ -402,12 +426,46 @@
   // User Profile Extraction
   // ============================================
 
+  // Store current user's name for message sender detection
+  let currentUserName = null;
+
+  function getCurrentUserName() {
+    if (currentUserName) return currentUserName;
+
+    // Try to get from the "Me" button
+    const meButton = document.querySelector('.global-nav__me-photo');
+    if (meButton) {
+      currentUserName = meButton.getAttribute('alt');
+      console.log('[LinkedIn Triage] Detected current user name:', currentUserName);
+      return currentUserName;
+    }
+
+    // Try other selectors
+    const nameSelectors = [
+      '.global-nav__me .t-14',
+      '.global-nav__me-content .t-bold',
+      '[data-control-name="nav.settings_view_profile"] .t-bold'
+    ];
+
+    for (const selector of nameSelectors) {
+      const el = document.querySelector(selector);
+      if (el && el.textContent.trim()) {
+        currentUserName = el.textContent.trim();
+        console.log('[LinkedIn Triage] Detected current user name from selector:', currentUserName);
+        return currentUserName;
+      }
+    }
+
+    return null;
+  }
+
   function extractCurrentUserProfile() {
     // Try to get the user's profile URL from the "Me" dropdown
     // The profile link is in the nav menu
     const meButton = document.querySelector('.global-nav__me-photo');
     if (meButton) {
       const userName = meButton.getAttribute('alt');
+      currentUserName = userName; // Store it
       console.log('[LinkedIn Triage] Found current user:', userName);
     }
 
@@ -588,8 +646,20 @@
 
   async function requestClassification(conversations) {
     const messagesToClassify = conversations.map(function(c) {
-      // Get conversation dynamics from intercepted API data
+      // Get conversation dynamics from intercepted API data (may be empty)
       const dynamics = getDynamicsForConversation(c.conversationId);
+
+      // Prefer DOM-detected values over API interceptor values
+      // DOM detection checks if preview starts with "You:" or user's name
+      const userMsgCount = c.userMessageCount || dynamics.userMessageCount || 0;
+      const theirMsgCount = c.theirMessageCount || dynamics.theirMessageCount || 0;
+      const lastByUser = c.lastMessageByUser || false;
+
+      // If user sent the last message, they've definitely sent at least one
+      const effectiveUserMsgCount = lastByUser ? Math.max(userMsgCount, 1) : userMsgCount;
+
+      console.log('[LinkedIn Triage] Dynamics for', c.participantName,
+        '- userMsgs:', effectiveUserMsgCount, 'theirMsgs:', theirMsgCount, 'lastByUser:', lastByUser);
 
       return {
         conversationId: c.conversationId,
@@ -600,9 +670,10 @@
         isFirstConnection: c.isFirstConnection,
         isInMail: c.isInMail || false,
         // Include conversation dynamics for better classification
-        userInitiated: dynamics.userInitiated,
-        theirMessageCount: dynamics.theirMessageCount,
-        userMessageCount: dynamics.userMessageCount
+        userInitiated: dynamics.userInitiated || lastByUser, // If user sent last, likely initiated or engaged
+        theirMessageCount: theirMsgCount,
+        userMessageCount: effectiveUserMsgCount,
+        lastMessageByUser: lastByUser
       };
     });
 

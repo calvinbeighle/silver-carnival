@@ -43,6 +43,8 @@
 
   // State
   let currentFilters = { ...DefaultFilters };
+  let autoRefreshInterval = null;
+  const AUTO_REFRESH_INTERVAL_MS = 5000; // Refresh stats every 5 seconds
 
   /**
    * Initialize popup
@@ -60,6 +62,46 @@
     await loadStats();
     await loadUserContext();
     setupEventListeners();
+    startAutoRefresh();
+
+    // Auto-reload the LinkedIn page when popup opens
+    autoReloadLinkedInPage();
+  }
+
+  /**
+   * Auto-reload LinkedIn page when popup opens
+   */
+  async function autoReloadLinkedInPage() {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs[0] && tabs[0].url && tabs[0].url.includes('linkedin.com')) {
+        await chrome.tabs.reload(tabs[0].id);
+      }
+    } catch (error) {
+      console.error('Auto-reload error:', error);
+    }
+  }
+
+  /**
+   * Start auto-refresh interval
+   */
+  function startAutoRefresh() {
+    // Clear any existing interval
+    if (autoRefreshInterval) {
+      clearInterval(autoRefreshInterval);
+    }
+
+    // Set up new interval to refresh stats
+    autoRefreshInterval = setInterval(async () => {
+      await loadStats();
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    // Clean up when popup closes
+    window.addEventListener('unload', () => {
+      if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+      }
+    });
   }
 
   /**
@@ -175,15 +217,15 @@
       if (response && response.stats) {
         const stats = response.stats;
 
-        const personalEl = document.querySelector('.stat-personal .stat-count');
-        const recruitingEl = document.querySelector('.stat-recruiting .stat-count');
-        const salesEl = document.querySelector('.stat-sales .stat-count');
-        const otherEl = document.querySelector('.stat-other .stat-count');
+        const importantEl = document.querySelector('.stat-important .stat-count');
+        const shouldRespondEl = document.querySelector('.stat-shouldrespond .stat-count');
+        const weMetEl = document.querySelector('.stat-wemet .stat-count');
+        const promotionsEl = document.querySelector('.stat-promotions .stat-count');
 
-        if (personalEl) personalEl.textContent = stats.PERSONAL || 0;
-        if (recruitingEl) recruitingEl.textContent = stats.RECRUITING || 0;
-        if (salesEl) salesEl.textContent = stats.SALES || 0;
-        if (otherEl) otherEl.textContent = stats.OTHER || 0;
+        if (importantEl) importantEl.textContent = stats.IMPORTANT || 0;
+        if (shouldRespondEl) shouldRespondEl.textContent = stats.SHOULD_RESPOND || 0;
+        if (weMetEl) weMetEl.textContent = stats.WE_MET || 0;
+        if (promotionsEl) promotionsEl.textContent = stats.PROMOTIONS || 0;
         if (totalCountEl) totalCountEl.textContent = stats.total || 0;
       }
     } catch (error) {
