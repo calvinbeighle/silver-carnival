@@ -78,14 +78,14 @@
 }
 
 .li-triage-filter-btn:hover {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
+  background: #f9f9f9;
+  border-color: #a0aec0;
 }
 
 .li-triage-filter-btn.li-triage-filter-active {
-  background: #f0fdf4;
-  border-color: #86efac;
-  color: #166534;
+  background: white;
+  border-color: #a0aec0;
+  color: #374151;
 }
 
 .li-triage-filter-btn:not(.li-triage-filter-active) {

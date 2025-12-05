@@ -165,13 +165,15 @@
   const CategoryColors = {
     PROMOTIONS: '#ef4444',
     SHOULD_RESPOND: '#22c55e',
+    AWAITING_RESPONSE: '#8b5cf6',
     WE_MET: '#eab308',
     IMPORTANT: '#3b82f6'
   };
 
   const CategoryLabels = {
     PROMOTIONS: 'Promotions',
-    SHOULD_RESPOND: 'Possible Response',
+    SHOULD_RESPOND: 'Needs Response',
+    AWAITING_RESPONSE: 'Awaiting Response',
     WE_MET: 'We Met',
     IMPORTANT: 'Important'
   };
@@ -179,6 +181,7 @@
   const DefaultFilters = {
     PROMOTIONS: false,
     SHOULD_RESPOND: true,
+    AWAITING_RESPONSE: true,
     WE_MET: true,
     IMPORTANT: true
   };
@@ -836,7 +839,7 @@
     const toolbar = document.createElement('div');
     toolbar.className = 'li-triage-toolbar';
 
-    const categories = ['IMPORTANT', 'SHOULD_RESPOND', 'WE_MET', 'PROMOTIONS'];
+    const categories = ['IMPORTANT', 'SHOULD_RESPOND', 'AWAITING_RESPONSE', 'WE_MET', 'PROMOTIONS'];
 
     for (const category of categories) {
       const button = document.createElement('button');
@@ -866,20 +869,6 @@
 
       toolbar.appendChild(button);
     }
-
-    // Bulk action button
-    const bulkActions = document.createElement('div');
-    bulkActions.className = 'li-triage-bulk-actions';
-
-    const archivePromosBtn = document.createElement('button');
-    archivePromosBtn.className = 'li-triage-bulk-btn';
-    archivePromosBtn.textContent = 'Hide Promotions';
-    archivePromosBtn.addEventListener('click', function() {
-      bulkHideCategory('PROMOTIONS');
-    });
-    bulkActions.appendChild(archivePromosBtn);
-
-    toolbar.appendChild(bulkActions);
 
     // Find insertion point - try multiple locations
     let inserted = false;

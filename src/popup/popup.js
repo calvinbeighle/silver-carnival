@@ -19,13 +19,15 @@
   const CategoryColors = {
     PROMOTIONS: '#ef4444',
     SHOULD_RESPOND: '#22c55e',
+    AWAITING_RESPONSE: '#8b5cf6',
     WE_MET: '#eab308',
     IMPORTANT: '#3b82f6'
   };
 
   const CategoryLabels = {
     PROMOTIONS: 'Promotions',
-    SHOULD_RESPOND: 'Possible Response',
+    SHOULD_RESPOND: 'Needs Response',
+    AWAITING_RESPONSE: 'Awaiting Response',
     WE_MET: 'We Met',
     IMPORTANT: 'Important'
   };
@@ -33,6 +35,7 @@
   const DefaultFilters = {
     PROMOTIONS: false,
     SHOULD_RESPOND: true,
+    AWAITING_RESPONSE: true,
     WE_MET: true,
     IMPORTANT: true
   };

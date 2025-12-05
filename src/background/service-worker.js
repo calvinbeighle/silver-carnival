@@ -696,17 +696,13 @@ function applyEngagementOverride(classification, msg) {
     'userInitiated:', userInitiated, 'lastByUser:', lastMessageByUser,
     'current category:', result.category);
 
-  // RULE 1: If user sent the last message, they're engaged - NEVER promotions
+  // RULE 1: If user sent the last message, they're AWAITING a response
   if (lastMessageByUser) {
-    if (result.category === 'PROMOTIONS') {
-      result.category = 'SHOULD_RESPOND'; // Waiting for their reply
-      result.priority = Math.max(result.priority, 7);
-      result.signals = [...(result.signals || []), 'User sent last message'];
-      console.log('[LinkedIn Triage] Override: User sent last message -> SHOULD_RESPOND');
-      return result;
-    }
-    // If already a good category, boost priority
+    result.category = 'AWAITING_RESPONSE';
     result.priority = Math.max(result.priority, 7);
+    result.signals = [...(result.signals || []), 'You sent the last message'];
+    console.log('[LinkedIn Triage] Override: User sent last message -> AWAITING_RESPONSE');
+    return result;
   }
 
   // RULE 2: If user sent more messages than them, this is IMPORTANT (user is reaching out)
@@ -736,21 +732,12 @@ function applyEngagementOverride(classification, msg) {
     return result;
   }
 
-  // RULE 5: If they sent multiple messages with NO user reply, likely PROMOTIONS
-  if (theirMessageCount >= 2 && userMessageCount === 0 && !lastMessageByUser && result.category !== 'PROMOTIONS') {
-    result.category = 'PROMOTIONS';
-    result.priority = Math.min(result.priority, 3);
-    result.signals = [...(result.signals || []), 'Multiple unanswered follow-ups'];
-    console.log('[LinkedIn Triage] Override: Multiple unanswered messages -> PROMOTIONS');
-    return result;
-  }
-
   return result;
 }
 
 function validateClassification(obj) {
-  // Only 4 valid categories
-  const validCategories = ['PROMOTIONS', 'SHOULD_RESPOND', 'WE_MET', 'IMPORTANT'];
+  // Valid categories
+  const validCategories = ['PROMOTIONS', 'SHOULD_RESPOND', 'AWAITING_RESPONSE', 'WE_MET', 'IMPORTANT'];
 
   // Get category directly
   let category = (obj.category || 'SHOULD_RESPOND').toUpperCase();
